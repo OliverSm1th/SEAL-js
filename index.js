@@ -6,6 +6,7 @@ const textDecoder = new TextDecoder();
 let status_element = document.getElementById("console");
 let result_element = document.getElementById("result");
 let result_logo = document.getElementById("result_logo");
+let fileUpload = document.getElementById("upload");
 window.decode_ex = (image) => {
     display_img.src = image.src
 
@@ -40,6 +41,18 @@ media_container.addEventListener("drop", async (e) => {
         }
     }
 })
+
+fileUpload.addEventListener("change", function (b) {
+    let file = b.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.readAsArrayBuffer(file);
+    reader.onload = async () => {
+        file.array_buffer = reader.result
+        file.format = file.type;
+        fileRead(file);
+    }
+});
 
 
 async function fileRead(file) {
@@ -98,7 +111,7 @@ async function fileRead(file) {
         } catch (error) {
             console.error(error)
             status_element.innerHTML = hljs.highlight(
-                JSON.stringify(error)+"\n"+error.message,
+                JSON.stringify(error) + "\n" + error.message,
                 { language: 'bash' }
             ).value
         }
