@@ -1,4 +1,4 @@
 .vscode/*
-resources
 node_modules
 package-lock.json
+resources
