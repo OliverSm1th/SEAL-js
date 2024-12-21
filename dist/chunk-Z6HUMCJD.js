@@ -45,7 +45,7 @@ var mediaAsset = class {
           }
           i++;
         }
-        const sealString = textDecoder.decode(dataArray.slice(sealStart, i + 1));
+        const sealString = textDecoder.decode(dataArray.slice(sealStart, i + 1)).replace(/\\/gm, "");
         this.seal_segments.push({ string: sealString, signature_end: i - 2 });
       }
     }

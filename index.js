@@ -100,7 +100,7 @@ async function fileRead(file) {
         try {
             SEAL.parse(asset);
             let summary = await SEAL.validateSig(asset)
-            status_element.innerHTML = hljs.highlight(summary.summary, { language: 'bash' }).value
+            status_element.innerHTML = hljs.highlight(summary.summary, { language: 'console' }).value
             if (summary.result == true) {
                 result_element.style.display = "unset";
                 result_logo.src = "./static/valid.svg";
