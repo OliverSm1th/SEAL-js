@@ -238,6 +238,26 @@ var SEAL = class _SEAL {
       }
       sealRecord[match[1]] = match[2];
     }
+    if (!sealRecord.da) {
+      sealRecord.da = "sha256";
+    }
+    switch (sealRecord.da) {
+      case "sha256":
+        sealRecord.da = "SHA-256";
+        break;
+      case "sha384":
+        sealRecord.da = "SHA-384";
+        break;
+      case "sha512":
+        sealRecord.da = "SHA-512";
+        break;
+      case "sha1":
+        sealRecord.da = "SHA-1";
+        break;
+      default:
+        sealRecord.da = "SHA-256";
+        break;
+    }
     if (sealRecord.seal && sealRecord.d && sealRecord.ka && sealRecord.s) {
       this.record = sealRecord;
     } else {
@@ -247,6 +267,79 @@ var SEAL = class _SEAL {
       });
     }
     console.timeEnd("parse");
+  }
+  static async validateSig(asset) {
+    return new Promise(async (resolve, reject) => {
+      this.validation = { digest_summary: "", signature_bytes: new Uint8Array(), signature_encoding: "" };
+      let result_string;
+      if (!this.public_keys[this.record.d]) {
+        await this.getDNS(this.record.d, "mozilla").catch((error) => {
+          return reject(
+            new ValidationError({
+              name: "DNS_LOOKUP",
+              message: "Querying DoH DNS for public key failed",
+              cause: error
+            })
+          );
+        });
+      }
+      await _SEAL.digest(asset);
+      await _SEAL.doubleDigest();
+      let algorithmParameters = this.getAlgorithmParameters(
+        this.public_keys[this.record.d][this.record.ka].p,
+        this.record.da,
+        this.record.ka
+      );
+      let cryptoKey = await _SEAL.importCryptoKey(this.public_keys[this.record.d][this.record.ka].p, algorithmParameters);
+      if (this.validation.digest2 && this.validation.signature && cryptoKey) {
+        console.time("verifySignature");
+        let result = await this.verifySignature(
+          this.validation.digest2,
+          this.validation.signature_bytes,
+          cryptoKey,
+          algorithmParameters
+        ).catch((error) => {
+          reject(
+            new ValidationError({
+              name: "VALIDATION_GENERAL_ERROR",
+              message: "crypto.subtle.verify couldn't process the data",
+              cause: error
+            })
+          );
+        });
+        console.timeEnd("verifySignature");
+        if (result !== false) {
+          result_string = `${asset.mimeType}:[${asset.filename}]
+\u2705 SEAL record #1 is valid.`;
+        } else {
+          result_string = `${asset.mimeType}:[${asset.filename}]
+\u26D4 SEAL record #1 is NOT valid.`;
+        }
+        if (this.validation.signature_date) {
+          result_string = result_string + "\nDate: " + createDate(this.validation.signature_date);
+        }
+        this.validation.digest2 = new Uint8Array(await crypto.subtle.digest(this.record.da, this.validation.digest2));
+        let key_length = this.getCryptoKeyLength(cryptoKey);
+        let summary = `${result_string}
+Signature Algorithm: ${this.record.ka.toUpperCase()}, ${key_length} bits
+Digest Algorithm: ${this.record.da}
+Digest: ${Array.from(this.validation.digest1).map((bytes) => bytes.toString(16).padStart(2, "0")).join("")}
+Double Digest: ${Array.from(this.validation.digest2).map((bytes) => bytes.toString(16).padStart(2, "0")).join("")}
+Signed Bytes: ${this.validation.digest_ranges}
+Signature Spans: ${this.validation.digest_summary}
+Signed By: ${this.record.d} for user ${this.record.id}
+Copyright: ${this.record.copyright}
+Comment: ${this.record.info}`;
+        resolve({ result, summary });
+      } else {
+        reject(
+          new ValidationError({
+            name: "VALIDATION_MISSING_PARAMETERS",
+            message: "Double Digest or Signature is missing"
+          })
+        );
+      }
+    });
   }
   /**
    * getDNS(): Given a hostname and a DoH provider, get SEAL keys from DNS.
@@ -311,58 +404,6 @@ var SEAL = class _SEAL {
     });
   }
   /**
-   * Imports a public key from a PEM-encoded string.
-   *
-   * @param pem - The PEM-encoded public key.
-   * @param keyAlgorithm - The key algorithm ('rsa' or 'ec').
-   * @returns A promise that resolves to the imported CryptoKey.
-   */
-  static async importPublicKey(pem, keyAlgorithm) {
-    console.time("importPublicKey");
-    return new Promise(async (resolve, reject) => {
-      let algorithmParams;
-      if (keyAlgorithm === "rsa") {
-        algorithmParams = {
-          name: "RSASSA-PKCS1-v1_5",
-          hash: {
-            name: "SHA-256"
-            // TODO: Add handling for different key sizes
-          }
-        };
-      } else if (keyAlgorithm === "ec") {
-        algorithmParams = {
-          name: "ECDSA",
-          namedCurve: "P-256"
-          // TODO: Replace with the appropriate curve name
-        };
-      }
-      const keyData = base64ToArrayBuffer(pem);
-      await crypto.subtle.importKey(
-        "spki",
-        // The format of the key
-        keyData,
-        // The key data
-        algorithmParams,
-        // The algorithm parameters
-        true,
-        // Whether the key is extractable
-        ["verify"]
-        // The key usage
-      ).then((publicKey) => {
-        resolve(publicKey);
-      }).catch((error) => {
-        if (keyAlgorithm === "rsa") {
-          reject("RSA: " + error.message);
-        }
-        reject(error.message);
-        if (keyAlgorithm === "ec") {
-          reject("EC: " + error.message);
-        }
-      });
-      console.timeEnd("importPublicKey");
-    });
-  }
-  /**
    * digest(): Given a file, compute the digest!
    * Computes the digest and stores binary data in @digest1.
    * Stores the byte range in 'digest_range'.
@@ -373,7 +414,7 @@ var SEAL = class _SEAL {
    * @memberof SEAL
    */
   static async digest(asset) {
-    return new Promise(async (resolve) => {
+    return new Promise(async (resolve, reject) => {
       console.time("digest");
       this.validation.digest_ranges = [];
       let show_range_start;
@@ -430,7 +471,12 @@ var SEAL = class _SEAL {
               start = 0;
               break;
             default:
-              console.error("ranges start error");
+              reject(
+                new ValidationError({
+                  name: "SEAL_RANGES",
+                  message: "ranges start error"
+                })
+              );
               break;
           }
           start = start + add + sub;
@@ -472,16 +518,23 @@ var SEAL = class _SEAL {
               stop = 0;
               break;
             default:
-              console.error("ranges start error");
+              reject(
+                new ValidationError({
+                  name: "SEAL_RANGES",
+                  message: "ranges stop error"
+                })
+              );
               break;
           }
           stop = stop + add + sub;
           this.validation.digest_ranges?.push([start, stop]);
           this.validation.digest_summary = `${show_range_start} to ${show_range_stop}`;
         });
-        this.validation.digest1 = await _SEAL._digest(asset.assembleBuffer(this.validation.digest_ranges), this.record.da);
-        console.timeEnd("digest");
-        resolve();
+        crypto.subtle.digest(this.record.da, asset.assembleBuffer(this.validation.digest_ranges)).then((digest) => {
+          this.validation.digest1 = new Uint8Array(digest);
+          console.timeEnd("digest");
+          resolve();
+        });
       }
     });
   }
@@ -509,7 +562,7 @@ var SEAL = class _SEAL {
             signature_formats.forEach((format) => {
               if (format == "base64" || format == "hex" || format == "HEX" || format == "bin") {
                 this.validation.signature_encoding = format;
-                this.validation.signature = this.validation.signature.replace(format + ":", "");
+                if (this.validation.signature) this.validation.signature = this.validation.signature.replace(format + ":", "");
               }
               if (format.includes("date")) {
                 let accuracy = parseInt(format.charAt(format.length - 1));
@@ -526,10 +579,10 @@ var SEAL = class _SEAL {
             this.validation.signature_encoding = "base64";
           }
           if (this.validation.signature_encoding == "hex" || this.validation.signature_encoding == "HEX") {
-            this.validation.signature = hexToArrayBuffer(this.validation.signature);
+            this.validation.signature_bytes = hexToUint8Array(this.validation.signature);
           }
           if (this.validation.signature_encoding == "base64") {
-            this.validation.signature = base64ToArrayBuffer(this.validation.signature);
+            this.validation.signature_bytes = base64ToUint8Array(this.validation.signature);
           }
         } catch (error) {
           reject(
@@ -554,9 +607,9 @@ var SEAL = class _SEAL {
       if (this.record.id) {
         prepend = prepend + this.record.id + ":";
       }
-      let prepend_buffer = textEncoder.encode(prepend).buffer;
+      let prepend_buffer = textEncoder.encode(prepend);
       if (this.validation.digest1) {
-        this.validation.digest2 = concatArrayBuffers(prepend_buffer, this.validation.digest1);
+        this.validation.digest2 = mergeBuffer(prepend_buffer, this.validation.digest1);
         console.timeEnd("doubleDigest");
         resolve();
       } else {
@@ -569,158 +622,100 @@ var SEAL = class _SEAL {
       }
     });
   }
-  static async validateSig(asset) {
-    console.time("validateSig");
-    return new Promise(async (resolve, reject) => {
-      this.validation = {};
-      let public_key;
-      let result_string;
-      if (!this.public_keys[this.record.d]) {
-        await this.getDNS(this.record.d, "mozilla").catch((error) => {
-          return reject(
-            new ValidationError({
-              name: "DNS_LOOKUP",
-              message: "Querying DoH DNS for public key failed",
-              cause: error
-            })
-          );
-        });
-      }
-      if (this.public_keys[this.record.d][this.record.ka]) {
-        if (!this.public_keys[this.record.d][this.record.ka].imported_key) {
-          public_key = this.public_keys[this.record.d][this.record.ka].imported_key = await this.importPublicKey(
-            this.public_keys[this.record.d][this.record.ka].p,
-            this.public_keys[this.record.d][this.record.ka].ka
-          ).catch((error) => {
-            return reject(
-              new ValidationError({
-                name: "KEY_IMPORT_ERROR",
-                message: "The Public key couldn't be imported",
-                cause: error
-              })
-            );
-          });
-        } else {
-          console.debug("CACHED ---importPublicKey");
-          public_key = this.public_keys[this.record.d][this.record.ka].imported_key;
-        }
-      }
-      await _SEAL.digest(asset);
-      await _SEAL.doubleDigest();
-      let algorithm;
-      let hash;
-      switch (this.record.da) {
-        case "sha256":
-          hash = "SHA-256";
+  static getAlgorithmParameters(publicKey, digestAlgorithm, keyAlgorithm) {
+    let algorithmParameters;
+    let hash = digestAlgorithm;
+    if (keyAlgorithm == "rsa") {
+      algorithmParameters = {
+        name: "RSASSA-PKCS1-v1_5",
+        hash: { name: hash }
+      };
+    } else if (keyAlgorithm == "ec") {
+      let named_curve;
+      switch (publicKey.length) {
+        case 91:
+          named_curve = "P-256";
           break;
-        case "sha384":
-          hash = "SHA-384";
+        case 120:
+          named_curve = "P-384";
           break;
-        case "sha512":
-          hash = "SHA-512";
-          break;
-        case "sha1":
-          hash = "SHA-1";
+        case 156:
+          named_curve = "P-521";
           break;
         default:
-          hash = "SHA-256";
+          named_curve = "P-256";
           break;
       }
-      if (this.record.ka == "rsa") {
-        algorithm = "RSASSA-PKCS1-v1_5";
-      }
-      if (this.record.ka == "ec") {
-        algorithm = {
-          name: "ECDSA",
-          hash: { name: hash }
-        };
-      }
-      if (this.validation.digest2 && this.validation.signature && public_key) {
-        await crypto.subtle.verify(algorithm, public_key, this.validation.signature, this.validation.digest2).then(async (result) => {
-          console.timeEnd("validateSig");
-          this.validation.digest2 = await _SEAL._digest(this.validation.digest2, this.record.da);
-          if (result !== false) {
-            result_string = `${asset.mimeType}:[${asset.filename}]
-\u2705 SEAL record #1 is valid.`;
-          } else {
-            result_string = `${asset.mimeType}:[${asset.filename}]
-\u26D4 SEAL record #1 is NOT valid.`;
-          }
-          if (this.validation.signature_date) {
-            result_string = result_string + "\nDate: " + createDate(this.validation.signature_date);
-          }
-          let summary = `${result_string}
-Signature Algorithm: ${this.record.ka.toUpperCase()}, ${256 * 8} bits
-Digest Algorithm: ${this.record.da}
-Digest: ${Array.from(new Uint8Array(this.validation.digest1)).map((bytes) => bytes.toString(16).padStart(2, "0")).join("")}
-Double Digest: ${Array.from(new Uint8Array(this.validation.digest2)).map((bytes) => bytes.toString(16).padStart(2, "0")).join("")}
-Signed Bytes: ${this.validation.digest_ranges}
-Signature Spans: ${this.validation.digest_summary}
-Signed By: ${this.record.d} for user ${this.record.id}
-Copyright: ${this.record.copyright}
-Comment: ${this.record.info}`;
-          resolve({ result, summary });
-        }).catch((error) => {
-          reject(
-            new ValidationError({
-              name: "VALIDATION_GENERAL_ERROR",
-              message: "crypto.subtle.verify couldn't process the data",
-              cause: error
-            })
-          );
-        });
-      } else {
+      algorithmParameters = {
+        name: "ECDSA",
+        hash,
+        namedCurve: named_curve
+      };
+    } else {
+      algorithmParameters = {
+        name: "RSASSA-PKCS1-v1_5",
+        hash: { name: hash }
+      };
+    }
+    return algorithmParameters;
+  }
+  static getCryptoKeyLength(key) {
+    let keyLength;
+    if (key.algorithm.name === "ECDSA") {
+      keyLength = parseInt(key.algorithm.namedCurve.replace("P-", ""));
+    }
+    if (key.algorithm.name === "RSASSA-PKCS1-v1_5") {
+      keyLength = key.algorithm.modulusLength;
+    }
+    return keyLength;
+  }
+  /**
+   * Imports a public key for use in cryptographic operations.
+   *
+   * @param {string} publicKey - The base64-encoded public key string.
+   * @param {SigningAlgorithm} algorithmParameters - The parameters of the cryptographic algorithm to use.
+   * @returns {Promise<CryptoKey>} - A promise that resolves to the imported CryptoKey.
+   * @throws {ValidationError} - If the key import process fails.
+   */
+  static async importCryptoKey(publicKey, algorithmParameters) {
+    return new Promise(async (resolve, reject) => {
+      const key = await crypto.subtle.importKey("spki", base64ToUint8Array(publicKey), algorithmParameters, true, ["verify"]).catch((error) => {
         reject(
           new ValidationError({
-            name: "VALIDATION_MISSING_PARAMETERS",
-            message: "Double Digest or Signature or Public key is missing"
+            name: "KEY_IMPORT_ERROR",
+            message: "crypto.subtle.importKey couldn't process the data",
+            cause: error
           })
         );
-      }
+      });
+      resolve(key);
     });
   }
   /**
+   * Verifies the digital signature of the given payload using the provided cryptographic key and algorithm parameters.
    *
-   *
-   * @static
-   * @param {ArrayBuffer} data
-   * @param {String} [da]
-   * @return {*}  {Promise<ArrayBuffer>}
-   * @memberof SEAL
+   * @param {Uint8Array} payload - The data payload to verify the signature against.
+   * @param {Uint8Array} signature - The digital signature to verify.
+   * @param {CryptoKey} cryptoKey - The cryptographic key used for verification.
+   * @param {SigningAlgorithm} algorithmParameters - The parameters of the cryptographic algorithm to use.
+   * @returns {Promise<boolean>} - A promise that resolves to true if the signature is valid, false otherwise.
    */
-  static async _digest(data, da) {
-    return new Promise(async (resolve) => {
-      let algorithm;
-      switch (da) {
-        case "sha256":
-          algorithm = "SHA-256";
-          break;
-        case "sha384":
-          algorithm = "SHA-384";
-          break;
-        case "sha512":
-          algorithm = "SHA-512";
-          break;
-        case "sha1":
-          algorithm = "SHA-1";
-          break;
-        default:
-          algorithm = "SHA-256";
-          break;
-      }
-      resolve(await crypto.subtle.digest(algorithm, data));
-    });
+  static async verifySignature(payload, signature, cryptoKey, algorithmParameters) {
+    if (cryptoKey.algorithm.name === "ECDSA") {
+      signature = convertEcdsaAsn1Signature(signature);
+    }
+    return crypto.subtle.verify(algorithmParameters, cryptoKey, signature, payload);
   }
 };
-function base64ToArrayBuffer(base64) {
+function base64ToUint8Array(base64) {
   const binaryString = atob(base64);
   const byteArray = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     byteArray[i] = binaryString.charCodeAt(i);
   }
-  return byteArray.buffer;
+  return byteArray;
 }
-function hexToArrayBuffer(hex) {
+function hexToUint8Array(hex) {
   if (hex.length % 2 !== 0) {
     throw new ValidationError({
       name: "HEX_STRING",
@@ -731,23 +726,57 @@ function hexToArrayBuffer(hex) {
   for (let i = 0; i < hex.length; i += 2) {
     bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
   }
-  return bytes.buffer;
+  return bytes;
 }
-function concatArrayBuffers(buffer1, buffer2) {
+function mergeBuffer(buffer1, buffer2) {
   if (!buffer1) {
     return buffer2;
   } else if (!buffer2) {
     return buffer1;
   }
   const concatenatedBuffer = new Uint8Array(buffer1.byteLength + buffer2.byteLength);
-  concatenatedBuffer.set(new Uint8Array(buffer1), 0);
-  concatenatedBuffer.set(new Uint8Array(buffer2), buffer1.byteLength);
-  return concatenatedBuffer.buffer;
+  concatenatedBuffer.set(buffer1, 0);
+  concatenatedBuffer.set(buffer2, buffer1.byteLength);
+  return concatenatedBuffer;
 }
 function createDate(dateString) {
   const datePattern = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{0,9})/;
   const formattedDateString = dateString.replace(datePattern, "$1-$2-$3T$4:$5:$6.$7Z");
   return new Date(formattedDateString);
+}
+function convertEcdsaAsn1Signature(input) {
+  const elements = readAsn1IntegerSequence(input);
+  if (elements.length !== 2) throw new Error("Expected 2 ASN.1 sequence elements");
+  let [r, s] = elements;
+  if (r[0] === 0 && r.byteLength % 16 == 1) {
+    r = r.slice(1);
+  }
+  if (s[0] === 0 && s.byteLength % 16 == 1) {
+    s = s.slice(1);
+  }
+  if (r.byteLength % 16 == 15) {
+    r = new Uint8Array(mergeBuffer(new Uint8Array([0]), r));
+  }
+  if (s.byteLength % 16 == 15) {
+    s = new Uint8Array(mergeBuffer(new Uint8Array([0]), s));
+  }
+  if (r.byteLength % 16 != 0) throw new Error("unknown ECDSA sig r length error");
+  if (s.byteLength % 16 != 0) throw new Error("unknown ECDSA sig s length error");
+  return mergeBuffer(r, s);
+}
+function readAsn1IntegerSequence(input) {
+  if (input[0] !== 48) throw new Error("Input is not an ASN.1 sequence");
+  const seqLength = input[1];
+  const elements = [];
+  let current = input.slice(2, 2 + seqLength);
+  while (current.length > 0) {
+    const tag = current[0];
+    if (tag !== 2) throw new Error("Expected ASN.1 sequence element to be an INTEGER");
+    const elLength = current[1];
+    elements.push(current.slice(2, 2 + elLength));
+    current = current.slice(2 + elLength);
+  }
+  return elements;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

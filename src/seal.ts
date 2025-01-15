@@ -5,16 +5,18 @@
  See LICENSE & LICENSE-typescript
  ************************************************/
 
-import { mediaAsset } from './mediaasset.js';
+import { mediaAsset } from './mediaasset';
 export { mediaAsset };
+
 interface sealValidation {
   digest_ranges?: any[];
   digest_summary: string;
   error?: any[];
-  digest1?: ArrayBuffer;
-  digest2?: ArrayBuffer;
+  digest1?: Uint8Array;
+  digest2?: Uint8Array;
   signature_date?: string;
-  signature?: string | ArrayBuffer;
+  signature?: string;
+  signature_bytes: Uint8Array;
   signature_encoding: string;
 }
 
@@ -83,7 +85,7 @@ interface sealAttributes {
    *      - "sha512": For much longer digests.
    *      - "sha1": For shorter digests. (This algorithm is deprecated by NIST, but still widely used.)
    */
-  da?: string; //'digest_algorithm', The digest algorithm. This MUST be a NIST-approved algorithm.
+  da: string; //'digest_algorithm', The digest algorithm. This MUST be a NIST-approved algorithm.
 
   /**
    * The byte range to include in the digest.
@@ -152,12 +154,30 @@ interface sealAttributes {
   sl?: string;
 }
 
+interface ECDSASigningAlgorithm {
+  name: 'ECDSA';
+  namedCurve: ECDSANamedCurve;
+  hash: HashAlgorithm;
+}
+
+interface PKCSV1_5SigningAlgorithm {
+  name: 'RSASSA-PKCS1-v1_5';
+  hash: { name: HashAlgorithm };
+}
+
+type HashAlgorithm = 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512';
+
+type ECDSANamedCurve = 'P-256' | 'P-384' | 'P-521';
+
+type SigningAlgorithm = ECDSASigningAlgorithm | PKCSV1_5SigningAlgorithm;
+
 const textEncoder = new TextEncoder();
 
 type ErrorName =
   | 'HEX_STRING'
   | 'DNS_LOOKUP'
   | 'SEAL_RECORD_MISSING_PARAMETERS'
+  | 'SEAL_RANGES'
   | 'KEY_IMPORT_ERROR'
   | 'DIGEST_MISSING'
   | 'VALIDATION_GENERAL_ERROR'
@@ -227,6 +247,28 @@ export class SEAL {
       sealRecord[match[1]] = match[2];
     }
 
+    if (!sealRecord.da) {
+      sealRecord.da = 'sha256';
+    }
+
+    switch (sealRecord.da) {
+      case 'sha256':
+        sealRecord.da = 'SHA-256'; // 32 bytes
+        break;
+      case 'sha384':
+        sealRecord.da = 'SHA-384'; // 48 bytes
+        break;
+      case 'sha512':
+        sealRecord.da = 'SHA-512'; // 64 bytes
+        break;
+      case 'sha1':
+        sealRecord.da = 'SHA-1'; // 20 bytes (This algorithm is deprecated by NIST, but still widely used, but don't use this in cryptographic applications)
+        break;
+      default:
+        sealRecord.da = 'SHA-256';
+        break;
+    }
+
     // Validate that all required parameters are present
     if (sealRecord.seal && sealRecord.d && sealRecord.ka && sealRecord.s) {
       this.record = sealRecord;
@@ -239,6 +281,96 @@ export class SEAL {
 
     // End timing the parse operation
     console.timeEnd('parse');
+  }
+
+  public static async validateSig(asset: any) {
+    return new Promise(async (resolve, reject) => {
+      this.validation = { digest_summary: '', signature_bytes: new Uint8Array(), signature_encoding: '' };
+
+      let result_string;
+      // DNS lookup if not in cache
+      if (!this.public_keys[this.record.d]) {
+        await this.getDNS(this.record.d, 'mozilla').catch((error) => {
+          return reject(
+            new ValidationError({
+              name: 'DNS_LOOKUP',
+              message: 'Querying DoH DNS for public key failed',
+              cause: error,
+            }),
+          );
+        });
+      }
+
+      await SEAL.digest(asset);
+      await SEAL.doubleDigest();
+
+      let algorithmParameters: SigningAlgorithm = this.getAlgorithmParameters(
+        this.public_keys[this.record.d][this.record.ka].p,
+        this.record.da,
+        this.record.ka,
+      );
+
+      let cryptoKey = await SEAL.importCryptoKey(this.public_keys[this.record.d][this.record.ka].p, algorithmParameters);
+
+      if (this.validation.digest2 && this.validation.signature && cryptoKey) {
+        console.time('verifySignature');
+
+        let result = await this.verifySignature(
+          this.validation.digest2,
+          this.validation.signature_bytes,
+          cryptoKey,
+          algorithmParameters,
+        ).catch((error) => {
+          reject(
+            new ValidationError({
+              name: 'VALIDATION_GENERAL_ERROR',
+              message: "crypto.subtle.verify couldn't process the data",
+              cause: error,
+            }),
+          );
+        });
+        console.timeEnd('verifySignature');
+
+        //TODO: verbose flag
+        if (result !== false) {
+          result_string = `${asset.mimeType}:[${asset.filename}]\n✅ SEAL record #1 is valid.`;
+        } else {
+          result_string = `${asset.mimeType}:[${asset.filename}]\n⛔ SEAL record #1 is NOT valid.`;
+        }
+
+        if (this.validation.signature_date) {
+          result_string = result_string + '\nDate: ' + createDate(this.validation.signature_date);
+        }
+
+        //calculated for the verbose summary
+        this.validation.digest2 = new Uint8Array(await crypto.subtle.digest(this.record.da, this.validation.digest2));
+        let key_length = this.getCryptoKeyLength(cryptoKey);
+
+        let summary = `${result_string}
+Signature Algorithm: ${this.record.ka.toUpperCase()}, ${key_length} bits
+Digest Algorithm: ${this.record.da}
+Digest: ${Array.from(this.validation.digest1 as Uint8Array)
+          .map((bytes) => bytes.toString(16).padStart(2, '0'))
+          .join('')}
+Double Digest: ${Array.from(this.validation.digest2)
+          .map((bytes) => bytes.toString(16).padStart(2, '0'))
+          .join('')}
+Signed Bytes: ${this.validation.digest_ranges}
+Signature Spans: ${this.validation.digest_summary}
+Signed By: ${this.record.d} for user ${this.record.id}
+Copyright: ${this.record.copyright}
+Comment: ${this.record.info}`;
+
+        resolve({ result: result, summary: summary });
+      } else {
+        reject(
+          new ValidationError({
+            name: 'VALIDATION_MISSING_PARAMETERS',
+            message: 'Double Digest or Signature is missing',
+          }),
+        );
+      }
+    });
   }
 
   /**
@@ -328,63 +460,6 @@ export class SEAL {
   }
 
   /**
-   * Imports a public key from a PEM-encoded string.
-   *
-   * @param pem - The PEM-encoded public key.
-   * @param keyAlgorithm - The key algorithm ('rsa' or 'ec').
-   * @returns A promise that resolves to the imported CryptoKey.
-   */
-  public static async importPublicKey(pem: string, keyAlgorithm: string): Promise<CryptoKey> {
-    console.time('importPublicKey');
-
-    return new Promise(async (resolve, reject) => {
-      let algorithmParams;
-
-      // Define the algorithm parameters based on the key algorithm
-      if (keyAlgorithm === 'rsa') {
-        algorithmParams = {
-          name: 'RSASSA-PKCS1-v1_5',
-          hash: {
-            name: 'SHA-256', // TODO: Add handling for different key sizes
-          },
-        };
-      } else if (keyAlgorithm === 'ec') {
-        algorithmParams = {
-          name: 'ECDSA',
-          namedCurve: 'P-256', // TODO: Replace with the appropriate curve name
-        };
-      }
-
-      // Convert the PEM-encoded key to an ArrayBuffer
-      const keyData: ArrayBuffer = base64ToArrayBuffer(pem);
-
-      // Import the public key using the SubtleCrypto API
-      await crypto.subtle
-        .importKey(
-          'spki', // The format of the key
-          keyData, // The key data
-          algorithmParams, // The algorithm parameters
-          true, // Whether the key is extractable
-          ['verify'], // The key usage
-        )
-        .then((publicKey) => {
-          resolve(publicKey);
-        })
-        .catch((error) => {
-          if (keyAlgorithm === 'rsa') {
-            reject('RSA: ' + error.message);
-          }
-          reject(error.message);
-          if (keyAlgorithm === 'ec') {
-            reject('EC: ' + error.message);
-          }
-        });
-
-      console.timeEnd('importPublicKey');
-    });
-  }
-
-  /**
    * digest(): Given a file, compute the digest!
    * Computes the digest and stores binary data in @digest1.
    * Stores the byte range in 'digest_range'.
@@ -395,7 +470,7 @@ export class SEAL {
    * @memberof SEAL
    */
   private static async digest(asset: any): Promise<void> {
-    return new Promise(async (resolve) => {
+    return new Promise(async (resolve, reject) => {
       console.time('digest');
       // Digest ranges mapping
       this.validation.digest_ranges = [];
@@ -459,7 +534,12 @@ export class SEAL {
               start = 0; // to do
               break;
             default:
-              console.error('ranges start error');
+              reject(
+                new ValidationError({
+                  name: 'SEAL_RANGES',
+                  message: 'ranges start error',
+                }),
+              );
               break;
           }
           start = start + add + sub;
@@ -505,7 +585,12 @@ export class SEAL {
               stop = 0; // to do
               break;
             default:
-              console.error('ranges start error');
+              reject(
+                new ValidationError({
+                  name: 'SEAL_RANGES',
+                  message: 'ranges stop error',
+                }),
+              );
               break;
           }
 
@@ -514,9 +599,11 @@ export class SEAL {
           this.validation.digest_summary = `${show_range_start} to ${show_range_stop}`;
         });
 
-        this.validation.digest1 = await SEAL._digest(asset.assembleBuffer(this.validation.digest_ranges), this.record.da);
-        console.timeEnd('digest');
-        resolve();
+        crypto.subtle.digest(this.record.da, asset.assembleBuffer(this.validation.digest_ranges)).then((digest) => {
+          this.validation.digest1 = new Uint8Array(digest);
+          console.timeEnd('digest');
+          resolve();
+        });
       }
     });
   }
@@ -548,7 +635,7 @@ export class SEAL {
             signature_formats.forEach((format: string) => {
               if (format == 'base64' || format == 'hex' || format == 'HEX' || format == 'bin') {
                 this.validation.signature_encoding = format;
-                this.validation.signature = this.validation.signature.replace(format + ':', '');
+                if (this.validation.signature) this.validation.signature = this.validation.signature.replace(format + ':', '');
               }
 
               if (format.includes('date')) {
@@ -566,13 +653,12 @@ export class SEAL {
             // Default
             this.validation.signature_encoding = 'base64';
           }
-
           if (this.validation.signature_encoding == 'hex' || this.validation.signature_encoding == 'HEX') {
-            this.validation.signature = hexToArrayBuffer(this.validation.signature);
+            this.validation.signature_bytes = hexToUint8Array(this.validation.signature);
           }
 
           if (this.validation.signature_encoding == 'base64') {
-            this.validation.signature = base64ToArrayBuffer(this.validation.signature);
+            this.validation.signature_bytes = base64ToUint8Array(this.validation.signature);
           }
         } catch (error) {
           reject(
@@ -600,11 +686,12 @@ export class SEAL {
         prepend = prepend + this.record.id + ':';
       }
 
-      let prepend_buffer: ArrayBuffer = textEncoder.encode(prepend).buffer;
+      let prepend_buffer: Uint8Array = textEncoder.encode(prepend);
 
       if (this.validation.digest1) {
         //Note crypto.subtle.verify does the hashing!
-        this.validation.digest2 = concatArrayBuffers(prepend_buffer, this.validation.digest1); // working with sha-256
+        this.validation.digest2 = mergeBuffer(prepend_buffer, this.validation.digest1);
+
         console.timeEnd('doubleDigest');
         resolve();
       } else {
@@ -618,181 +705,114 @@ export class SEAL {
     });
   }
 
-  public static async validateSig(asset: any) {
-    console.time('validateSig');
-    return new Promise(async (resolve, reject) => {
-      this.validation = {};
-      let public_key;
-      let result_string;
+  private static getAlgorithmParameters(publicKey: string, digestAlgorithm: string, keyAlgorithm: string): SigningAlgorithm {
+    let algorithmParameters: SigningAlgorithm;
 
-      // DNS lookup if not in cache
-      if (!this.public_keys[this.record.d]) {
-        await this.getDNS(this.record.d, 'mozilla').catch((error) => {
-          return reject(
+    let hash: HashAlgorithm = digestAlgorithm as HashAlgorithm;
+
+    if (keyAlgorithm == 'rsa') {
+      algorithmParameters = {
+        name: 'RSASSA-PKCS1-v1_5',
+        hash: { name: hash },
+      };
+    } else if (keyAlgorithm == 'ec') {
+      let named_curve: ECDSANamedCurve;
+      switch (publicKey.length) {
+        case 91:
+          named_curve = 'P-256'; // Assuming ECDSA P-256: 91 bytes
+          break;
+        case 120:
+          named_curve = 'P-384'; // Assuming ECDSA P-384: 120 bytes
+          break;
+        case 156:
+          named_curve = 'P-521'; // Assuming ECDSA P-521: 156 bytes
+          break;
+        default:
+          named_curve = 'P-256';
+          break;
+      }
+
+      algorithmParameters = {
+        name: 'ECDSA',
+        hash: hash,
+        namedCurve: named_curve,
+      };
+    } else {
+      algorithmParameters = {
+        name: 'RSASSA-PKCS1-v1_5',
+        hash: { name: hash },
+      };
+    }
+    return algorithmParameters;
+  }
+
+  private static getCryptoKeyLength(key: CryptoKey) {
+    let keyLength;
+    if (key.algorithm.name === 'ECDSA') {
+      keyLength = parseInt(key.algorithm.namedCurve.replace('P-', ''));
+    }
+    if (key.algorithm.name === 'RSASSA-PKCS1-v1_5') {
+      keyLength = key.algorithm.modulusLength;
+    }
+    return keyLength;
+  }
+
+  /**
+   * Imports a public key for use in cryptographic operations.
+   *
+   * @param {string} publicKey - The base64-encoded public key string.
+   * @param {SigningAlgorithm} algorithmParameters - The parameters of the cryptographic algorithm to use.
+   * @returns {Promise<CryptoKey>} - A promise that resolves to the imported CryptoKey.
+   * @throws {ValidationError} - If the key import process fails.
+   */
+  private static async importCryptoKey(publicKey: string, algorithmParameters: SigningAlgorithm): Promise<CryptoKey> {
+    return new Promise(async (resolve, reject) => {
+      const key = await crypto.subtle
+        .importKey('spki', base64ToUint8Array(publicKey), algorithmParameters, true, ['verify'])
+        .catch((error) => {
+          reject(
             new ValidationError({
-              name: 'DNS_LOOKUP',
-              message: 'Querying DoH DNS for public key failed',
+              name: 'KEY_IMPORT_ERROR',
+              message: "crypto.subtle.importKey couldn't process the data",
               cause: error,
             }),
           );
         });
-      }
-
-      // Importkey if not in cache
-      if (this.public_keys[this.record.d][this.record.ka]) {
-        if (!this.public_keys[this.record.d][this.record.ka].imported_key) {
-          public_key = this.public_keys[this.record.d][this.record.ka].imported_key = await this.importPublicKey(
-            this.public_keys[this.record.d][this.record.ka].p,
-            this.public_keys[this.record.d][this.record.ka].ka,
-          ).catch((error) => {
-            return reject(
-              new ValidationError({
-                name: 'KEY_IMPORT_ERROR',
-                message: "The Public key couldn't be imported",
-                cause: error,
-              }),
-            );
-          });
-        } else {
-          console.debug('CACHED ---importPublicKey');
-          public_key = this.public_keys[this.record.d][this.record.ka].imported_key;
-        }
-      }
-
-      await SEAL.digest(asset);
-
-      // I would prefer call doubleDigest the "digest-if": A digestif is an alcoholic beverage served after a meal,
-      // traditionally believed to aid digestion (even though there is not strong evidence to support this).
-      await SEAL.doubleDigest();
-
-      let algorithm;
-
-      let hash;
-
-      switch (this.record.da) {
-        case 'sha256':
-          hash = 'SHA-256'; // 32 bytes
-          break;
-        case 'sha384':
-          hash = 'SHA-384'; // 48 bytes
-          break;
-        case 'sha512':
-          hash = 'SHA-512'; // 64 bytes
-          break;
-        case 'sha1':
-          hash = 'SHA-1'; // 20 bytes (This algorithm is deprecated by NIST, but still widely used, but don't use this in cryptographic applications)
-          break;
-        default:
-          hash = 'SHA-256';
-          break;
-      }
-
-      if (this.record.ka == 'rsa') {
-        algorithm = 'RSASSA-PKCS1-v1_5'; // only SHA-256?
-      }
-
-      if (this.record.ka == 'ec') {
-        algorithm = {
-          name: 'ECDSA',
-          hash: { name: hash },
-        };
-      }
-
-      if (this.validation.digest2 && this.validation.signature && public_key) {
-        await crypto.subtle
-          .verify(algorithm, public_key, this.validation.signature, this.validation.digest2)
-          .then(async (result) => {
-            console.timeEnd('validateSig');
-            this.validation.digest2 = await SEAL._digest(this.validation.digest2, this.record.da);
-            if (result !== false) {
-              result_string = `${asset.mimeType}:[${asset.filename}]\n✅ SEAL record #1 is valid.`;
-            } else {
-              result_string = `${asset.mimeType}:[${asset.filename}]\n⛔ SEAL record #1 is NOT valid.`;
-            }
-
-            if (this.validation.signature_date) {
-              result_string = result_string + '\nDate: ' + createDate(this.validation.signature_date);
-            }
-
-            let summary = `${result_string}
-Signature Algorithm: ${this.record.ka.toUpperCase()}, ${256 * 8} bits
-Digest Algorithm: ${this.record.da}
-Digest: ${Array.from(new Uint8Array(this.validation.digest1))
-              .map((bytes) => bytes.toString(16).padStart(2, '0'))
-              .join('')}
-Double Digest: ${Array.from(new Uint8Array(this.validation.digest2))
-              .map((bytes) => bytes.toString(16).padStart(2, '0'))
-              .join('')}
-Signed Bytes: ${this.validation.digest_ranges}
-Signature Spans: ${this.validation.digest_summary}
-Signed By: ${this.record.d} for user ${this.record.id}
-Copyright: ${this.record.copyright}
-Comment: ${this.record.info}`;
-
-            resolve({ result: result, summary: summary });
-          })
-          .catch((error) => {
-            reject(
-              new ValidationError({
-                name: 'VALIDATION_GENERAL_ERROR',
-                message: "crypto.subtle.verify couldn't process the data",
-                cause: error,
-              }),
-            );
-          });
-      } else {
-        reject(
-          new ValidationError({
-            name: 'VALIDATION_MISSING_PARAMETERS',
-            message: 'Double Digest or Signature or Public key is missing',
-          }),
-        );
-      }
+      resolve(key as CryptoKey);
     });
   }
 
   /**
+   * Verifies the digital signature of the given payload using the provided cryptographic key and algorithm parameters.
    *
-   *
-   * @static
-   * @param {ArrayBuffer} data
-   * @param {String} [da]
-   * @return {*}  {Promise<ArrayBuffer>}
-   * @memberof SEAL
+   * @param {Uint8Array} payload - The data payload to verify the signature against.
+   * @param {Uint8Array} signature - The digital signature to verify.
+   * @param {CryptoKey} cryptoKey - The cryptographic key used for verification.
+   * @param {SigningAlgorithm} algorithmParameters - The parameters of the cryptographic algorithm to use.
+   * @returns {Promise<boolean>} - A promise that resolves to true if the signature is valid, false otherwise.
    */
-  private static async _digest(data: ArrayBuffer, da?: String): Promise<ArrayBuffer> {
-    return new Promise(async (resolve) => {
-      let algorithm: AlgorithmIdentifier;
-
-      switch (da) {
-        case 'sha256':
-          algorithm = 'SHA-256'; // 32 bytes
-          break;
-        case 'sha384':
-          algorithm = 'SHA-384'; // 48 bytes
-          break;
-        case 'sha512':
-          algorithm = 'SHA-512'; // 64 bytes
-          break;
-        case 'sha1':
-          algorithm = 'SHA-1'; // 20 bytes (This algorithm is deprecated by NIST, but still widely used, but don't use this in cryptographic applications)
-          break;
-        default:
-          algorithm = 'SHA-256';
-          break;
-      }
-      resolve(await crypto.subtle.digest(algorithm, data));
-    });
+  private static async verifySignature(
+    payload: Uint8Array,
+    signature: Uint8Array,
+    cryptoKey: CryptoKey,
+    algorithmParameters: SigningAlgorithm,
+  ): Promise<boolean> {
+    // Convert ECDSA signature from ASN.1 representation to IEEE P1363 representation
+    if (cryptoKey.algorithm.name === 'ECDSA') {
+      signature = convertEcdsaAsn1Signature(signature);
+    }
+    // Verify the signature using the SubtleCrypto API and return the result
+    return crypto.subtle.verify(algorithmParameters, cryptoKey, signature, payload);
   }
 }
 
 /**
- * Converts a Base64-encoded string to an ArrayBuffer.
+ * Converts a Base64-encoded string to an Uint8Array.
  *
  * @param base64 - The Base64-encoded string to convert.
- * @returns The resulting ArrayBuffer.
+ * @returns The resulting Uint8Array.
  */
-function base64ToArrayBuffer(base64: string): ArrayBufferLike {
+function base64ToUint8Array(base64: string): Uint8Array {
   // Decode the Base64-encoded string into a binary string
   const binaryString: string = atob(base64);
 
@@ -804,17 +824,17 @@ function base64ToArrayBuffer(base64: string): ArrayBufferLike {
     byteArray[i] = binaryString.charCodeAt(i);
   }
 
-  // Return the ArrayBuffer representation of the Uint8Array
-  return byteArray.buffer;
+  // Return the Uint8Array
+  return byteArray;
 }
 
 /**
- * Converts a hex string to an ArrayBuffer.
+ * Converts a hex string to an Uint8Array.
  *
  * @param hex - The hex string to convert.
- * @returns The resulting ArrayBuffer.
+ * @returns The resulting Uint8Array.
  */
-function hexToArrayBuffer(hex: string): ArrayBuffer {
+function hexToUint8Array(hex: string): Uint8Array {
   // Ensure the hex string has an even length
   if (hex.length % 2 !== 0) {
     throw new ValidationError({
@@ -831,18 +851,18 @@ function hexToArrayBuffer(hex: string): ArrayBuffer {
     bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
   }
 
-  // Return the ArrayBuffer representation of the Uint8Array
-  return bytes.buffer;
+  // Return the the Uint8Array
+  return bytes;
 }
 
 /**
- * Concatenates two ArrayBuffers.
+ * Concatenate two ArrayBuffers.
  *
  * @param buffer1 - The first ArrayBuffer to concatenate.
  * @param buffer2 - The second ArrayBuffer to concatenate.
  * @returns A new ArrayBuffer containing the concatenated data of buffer1 and buffer2.
  */
-function concatArrayBuffers(buffer1: ArrayBuffer, buffer2: ArrayBuffer): ArrayBuffer {
+function mergeBuffer(buffer1: Uint8Array, buffer2: Uint8Array): Uint8Array {
   // If buffer1 is null or undefined, return buffer2
   if (!buffer1) {
     return buffer2;
@@ -856,13 +876,13 @@ function concatArrayBuffers(buffer1: ArrayBuffer, buffer2: ArrayBuffer): ArrayBu
   const concatenatedBuffer = new Uint8Array(buffer1.byteLength + buffer2.byteLength);
 
   // Set the data from buffer1 into the new Uint8Array
-  concatenatedBuffer.set(new Uint8Array(buffer1), 0);
+  concatenatedBuffer.set(buffer1, 0);
 
   // Set the data from buffer2 into the new Uint8Array, starting at the end of buffer1's data
-  concatenatedBuffer.set(new Uint8Array(buffer2), buffer1.byteLength);
+  concatenatedBuffer.set(buffer2, buffer1.byteLength);
 
   // Return the ArrayBuffer representation of the concatenated Uint8Array
-  return concatenatedBuffer.buffer;
+  return concatenatedBuffer;
 }
 
 /**
@@ -880,4 +900,85 @@ function createDate(dateString: string): Date {
 
   // Create and return a new Date object using the formatted date string
   return new Date(formattedDateString);
+}
+
+/**
+ * Converts an ECDSA ASN.1 signature into a raw format.
+ * ref: https://www.criipto.com/blog/webauthn-ecdsa-signature
+ *
+ * @param {Uint8Array} input - The input buffer containing the ASN.1 signature.
+ * @returns {Uint8Array} - The converted raw ECDSA signature.
+ * @throws {Error} - If the input does not contain exactly 2 ASN.1 sequence elements,
+ *                   or if there are length inconsistencies in the R and S values.
+ */
+function convertEcdsaAsn1Signature(input: Uint8Array): Uint8Array {
+  // Read the ASN.1 integer sequence elements from the input.
+  const elements = readAsn1IntegerSequence(input);
+  if (elements.length !== 2) throw new Error('Expected 2 ASN.1 sequence elements');
+  let [r, s] = elements;
+
+  // R and S length is assumed to be a multiple of 128 bits (16 bytes).
+  // If the leading byte is 0 and the length modulo 16 is 1,
+  // the leading 0 is for two's complement and will be removed.
+  if (r[0] === 0 && r.byteLength % 16 == 1) {
+    r = r.slice(1);
+  }
+  if (s[0] === 0 && s.byteLength % 16 == 1) {
+    s = s.slice(1);
+  }
+
+  // If R and S length is missing a byte (length % 16 == 15),
+  // pad the value with a leading 0.
+  if (r.byteLength % 16 == 15) {
+    r = new Uint8Array(mergeBuffer(new Uint8Array([0]), r));
+  }
+  if (s.byteLength % 16 == 15) {
+    s = new Uint8Array(mergeBuffer(new Uint8Array([0]), s));
+  }
+
+  // If R and S length is still not a multiple of 128 bits, throw an error.
+  if (r.byteLength % 16 != 0) throw new Error('unknown ECDSA sig r length error');
+  if (s.byteLength % 16 != 0) throw new Error('unknown ECDSA sig s length error');
+
+  // Merge the R and S values into a single buffer and return it.
+  return mergeBuffer(r, s);
+}
+
+/**
+ * Reads an ASN.1 integer sequence from the input Uint8Array.
+ *
+ * @param {Uint8Array} input - The input buffer containing the ASN.1 sequence.
+ * @returns {Uint8Array[]} - An array of Uint8Array elements representing the integers in the sequence.
+ * @throws {Error} - If the input is not a valid ASN.1 sequence or if an element is not an INTEGER.
+ */
+function readAsn1IntegerSequence(input: Uint8Array): Uint8Array[] {
+  // Check if the input starts with the ASN.1 SEQUENCE tag (0x30).
+  if (input[0] !== 0x30) throw new Error('Input is not an ASN.1 sequence');
+
+  // Get the length of the sequence.
+  const seqLength = input[1];
+  const elements: Uint8Array[] = [];
+
+  // Slice the input to get the sequence content.
+  let current = input.slice(2, 2 + seqLength);
+
+  // Loop through the sequence content to extract INTEGER elements.
+  while (current.length > 0) {
+    const tag = current[0];
+
+    // Check if the tag is the ASN.1 INTEGER tag (0x02).
+    if (tag !== 0x02) throw new Error('Expected ASN.1 sequence element to be an INTEGER');
+
+    // Get the length of the INTEGER element.
+    const elLength = current[1];
+
+    // Push the INTEGER element into the elements array.
+    elements.push(current.slice(2, 2 + elLength));
+
+    // Slice the current buffer to process the next element.
+    current = current.slice(2 + elLength);
+  }
+
+  // Return the array of INTEGER elements.
+  return elements;
 }

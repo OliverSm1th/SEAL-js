@@ -32,7 +32,7 @@ This library is under active development and not fully functional yet. Proceed w
 - ✅ Compute the digest
 - ✅ Compute the Double Digest
 - ✅ Hash the digest
-- 🚧 Validate the digest **(sha256 RSA only)**
+- ✅ Validate the digest
 - ❌ Write SEAL metadata
   
 ### Image file formats Read Support

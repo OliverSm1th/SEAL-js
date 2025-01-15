@@ -31,7 +31,7 @@ export class mediaAsset implements Asset {
   public seal_segments = [];
 
   constructor(
-    protected data: ArrayBuffer,
+    protected data: ArrayBuffer | Uint8Array,
     protected filename: string,
   ) {
     this.filename = filename;
