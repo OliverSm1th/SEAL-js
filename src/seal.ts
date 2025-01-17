@@ -208,8 +208,6 @@ export class SEAL {
     // - XML/SVG/HTML: <?seal ... ?>
     // - XMP: <*:seal>&lt;seal ... /&gt;</\*:seal>, <*:seal seal='&lt;seal .../&gt;' /> Where '*' is a namespace
 
-    console.log(asset.seal_segments[0].string);
-
     //take into account XML and HTML character entities with padding for &quot;
     if (asset.seal_segments[0].string.match(/&quot;/g)) {
       asset.seal_segments[0].signature_end = asset.seal_segments[0].signature_end - 5;
@@ -223,7 +221,6 @@ export class SEAL {
       .replace('/&', '')
       .replace('&lt;seal ', '');
 
-    console.log(sealSegmentString);
     // Initialize the SEAL record object
     const sealRecord: any = {};
 
@@ -273,7 +270,6 @@ export class SEAL {
       });
     }
 
-    console.log('sealRecord s:', this.record.s);
     // End timing the parse operation
     console.timeEnd('parse');
   }

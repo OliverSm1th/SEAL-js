@@ -455,12 +455,10 @@ var SEAL = class _SEAL {
    */
   static parse(asset) {
     console.time("parse");
-    console.log(asset.seal_segments[0].string);
     if (asset.seal_segments[0].string.match(/&quot;/g)) {
       asset.seal_segments[0].signature_end = asset.seal_segments[0].signature_end - 5;
     }
     const sealSegmentString = asset.seal_segments[0].string.replace(/<.{0,1}seal /, "").replace(/\?{0,1}\/>/, "").replace(/&quot;/g, '"').replace("<seal:seal>", "").replace("/&", "").replace("&lt;seal ", "");
-    console.log(sealSegmentString);
     const sealRecord = {};
     const parameterPattern = / ?(.*?)=\"(.*?)\"/gm;
     let match;
@@ -498,7 +496,6 @@ var SEAL = class _SEAL {
         message: "The SEAL record is incomplete"
       });
     }
-    console.log("sealRecord s:", this.record.s);
     console.timeEnd("parse");
   }
   /**
