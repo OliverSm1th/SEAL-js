@@ -94,12 +94,12 @@ async function fileRead(file) {
 
     console.log(`********[${file.name}] (${file.format})*******`);
     let asset = new mediaAsset(file.array_buffer, file.name);
-    asset.dumpInfo();
+    //asset.dumpInfo();
     if (asset.seal_segments.length > 0) {
 
         try {
             SEAL.parse(asset);
-            let summary = await SEAL.validateSig(asset)
+            let summary = await SEAL.validateSig(asset,true)
             status_element.innerHTML = hljs.highlight(summary.summary, { language: 'console' }).value
             if (summary.result == true) {
                 result_element.style.display = "unset";

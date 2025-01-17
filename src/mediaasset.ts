@@ -5,30 +5,12 @@
  See LICENSE & LICENSE-typescript
  ************************************************/
 
-import { detectMimeType } from './mimetypes.js';
-
-interface Asset {
-  /**
-   * Returns the length of the asset in bytes
-   */
-  getDataLength(): number;
-
-  /**
-   * hold SEAL segments
-   */
-  seal_segments: any[];
-
-  /**
-   * The asset's MIME type
-   */
-  readonly mimeType: string;
-}
-
+import { detectMimeType } from './mimetypes';
 const textDecoder = new TextDecoder();
 
-export class mediaAsset implements Asset {
+export class mediaAsset {
   public mimeType = 'image/jpeg';
-  public seal_segments = [];
+  public seal_segments: any = [];
 
   constructor(
     protected data: ArrayBuffer | Uint8Array,
@@ -56,16 +38,17 @@ export class mediaAsset implements Asset {
     this.mimeType = detectMimeType(dataArray.slice(0, 140));
 
     // scan only the first and last 64kB if file > 64kB
-    // probably not working for some formats... TODO mimeType
+    // probably not working for some formats...
     let skip = false;
-    if (this.getDataLength() - 65536 > 65536) {
+    if (this.data.byteLength - 65536 > 65536) {
       skip = true;
     }
 
     // Iterate through the data array to find and process SEAL segments
     for (let i = 0; i < dataArray.length; i++) {
       if (i > 65536 && skip === true) {
-        i = this.getDataLength() - 65536;
+        //Moving pointer to the last 64kB
+        i = this.data.byteLength - 65536;
         skip = false;
       }
 
@@ -108,7 +91,11 @@ export class mediaAsset implements Asset {
 
         // Decode the SEAL segment and add it to seal_segments
         const sealString = textDecoder.decode(dataArray.slice(sealStart, i + 1)).replace(/\\/gm, '');
-        this.seal_segments.push({ string: sealString, signature_end: i - 2 });
+
+        this.seal_segments.push({
+          string: sealString,
+          signature_end: i - 2,
+        });
       }
     }
 

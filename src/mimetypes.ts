@@ -1,6 +1,7 @@
 /************************************************
  SEAL: implemented in Typescript
- Bertrand Gondouin (c) 2024
+ Original C code Copyright (c) 2024 Hacker Factor, Dr. Neal Krawetz
+ Ported to TypeScript by Bertrand Gondouin (c) 2024
  See LICENSE & LICENSE-typescript
  ************************************************/
 
