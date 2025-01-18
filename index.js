@@ -118,7 +118,7 @@ async function fileRead(file) {
 
     } else {
         status_element.innerHTML = hljs.highlight(
-            "😢 No SEAL data!",
+            "😢 No SEAL signatures found.",
             { language: 'bash' }
         ).value
     }

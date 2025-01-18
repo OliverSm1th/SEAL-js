@@ -287,8 +287,16 @@ function mergeBuffer(buffer1, buffer2) {
   return concatenatedBuffer;
 }
 function createDate(dateString) {
-  const datePattern = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{0,9})/;
-  const formattedDateString = dateString.replace(datePattern, "$1-$2-$3T$4:$5:$6.$7Z");
+  let accuracy;
+  let accuracy_chuncks = dateString.split(".");
+  if (accuracy_chuncks[1]) {
+    dateString = accuracy_chuncks[0];
+    accuracy = accuracy_chuncks[1];
+  } else {
+    accuracy = "000";
+  }
+  const datePattern = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/;
+  const formattedDateString = dateString.replace(datePattern, "$1-$2-$3T$4:$5:$6." + accuracy + "Z");
   return new Date(formattedDateString);
 }
 
@@ -789,11 +797,11 @@ var SEAL = class _SEAL {
                 let accuracy = parseInt(format.charAt(format.length - 1));
                 if (isNaN(accuracy)) {
                   this.validation.signature = this.record.s.substring(15, this.record.s.length);
-                  accuracy = 0;
+                  this.validation.signature_date = this.record.s.substring(0, 14);
                 } else {
                   this.validation.signature = this.record.s.substring(16 + accuracy, this.record.s.length);
+                  this.validation.signature_date = this.record.s.substring(0, 15 + accuracy);
                 }
-                this.validation.signature_date = this.record.s.substring(0, 15 + accuracy);
               }
             });
           } else {

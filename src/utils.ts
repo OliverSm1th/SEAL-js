@@ -82,17 +82,29 @@ export function mergeBuffer(buffer1: Uint8Array, buffer2: Uint8Array): Uint8Arra
 }
 
 /**
- * Creates a Date object from a string in the format YYYYMMDDHHMMSS.sssssssss.
+ * Creates a Date object from a string in the format YYYYMMDDHHMMSS.sssssssss or YYYYMMDDHHMMSS.
  *
- * @param dateString - The input date string in the format YYYYMMDDHHMMSS.sssssssss.
+ * @param dateString - The input date string in the format YYYYMMDDHHMMSS.sssssssss or YYYYMMDDHHMMSS.
  * @returns A Date object representing the input date and time.
  */
 export function createDate(dateString: string): Date {
+
+  //get accuracy if any
+  let accuracy;
+  let accuracy_chuncks = dateString.split('.');
+
+  if (accuracy_chuncks[1]) {
+    dateString = accuracy_chuncks[0]
+    accuracy = accuracy_chuncks[1];
+  } else {
+    accuracy = '000'
+  }
+
   // Regular expression to match the components of the date string
-  const datePattern = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{0,9})/;
+  const datePattern = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/;
 
   // Replace the matched components with the format required by the Date constructor
-  const formattedDateString = dateString.replace(datePattern, '$1-$2-$3T$4:$5:$6.$7Z');
+  const formattedDateString = dateString.replace(datePattern, '$1-$2-$3T$4:$5:$6.' + accuracy + "Z");
 
   // Create and return a new Date object using the formatted date string
   return new Date(formattedDateString);

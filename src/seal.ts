@@ -410,11 +410,11 @@ export class SEAL {
   Signature Algorithm: ${this.record.ka.toUpperCase()}, ${key_length} bits
   Digest Algorithm: ${this.record.da}
   Digest: ${Array.from(this.validation.digest1 as Uint8Array)
-    .map((bytes) => bytes.toString(16).padStart(2, '0'))
-    .join('')}
+              .map((bytes) => bytes.toString(16).padStart(2, '0'))
+              .join('')}
   Double Digest: ${Array.from(this.validation.digest2)
-    .map((bytes) => bytes.toString(16).padStart(2, '0'))
-    .join('')}
+              .map((bytes) => bytes.toString(16).padStart(2, '0'))
+              .join('')}
   Signed Bytes: ${digest_ranges_summary}
   Signature Spans: ${this.validation.digest_summary}
   Signed By: ${this.record.d} for user ${this.record.id}
@@ -613,11 +613,11 @@ export class SEAL {
                 let accuracy = parseInt(format.charAt(format.length - 1));
                 if (isNaN(accuracy)) {
                   this.validation.signature = this.record.s.substring(15, this.record.s.length);
-                  accuracy = 0;
+                  this.validation.signature_date = this.record.s.substring(0, 14);
                 } else {
                   this.validation.signature = this.record.s.substring(16 + accuracy, this.record.s.length);
+                  this.validation.signature_date = this.record.s.substring(0, 15 + accuracy);
                 }
-                this.validation.signature_date = this.record.s.substring(0, 15 + accuracy);
               }
             });
           } else {
