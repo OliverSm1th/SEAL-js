@@ -97,7 +97,7 @@ Example usage in a Node.js environment:
 ```typescript
 import path from 'path'
 import { readFileSync } from 'node:fs';
-import { SEAL, mediaAsset } from './dist/seal.js';
+import { SEAL } from './dist/seal.js';
 
 if (process.argv.length < 3) {
   console.error('Missing filename');
@@ -107,12 +107,12 @@ if (process.argv.length < 3) {
 // Read the asset file
 const buf = readFileSync(process.argv[2]).buffer;
 
-let asset = new mediaAsset(buf, path.basename(process.argv[2]));
-
-if (asset.seal_segments.length > 0) {
-  SEAL.parse(asset);
-  console.log(await SEAL.validateSig(asset))
-};
+let asset = {
+        data: buf,
+        name: path.basename(test_file),
+}
+let result = await SEAL.validateSig(asset,false);
+console.log(result)
 ```
 
 ### Creating a SEAL

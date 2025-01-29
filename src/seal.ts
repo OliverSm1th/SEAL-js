@@ -5,11 +5,10 @@
  See LICENSE & LICENSE-typescript
  ************************************************/
 
-import { mediaAsset } from './mediaasset';
+import { MediaAsset } from './mediaasset';
 import { DoH } from './doh';
 import { Crypto } from './crypto';
 import { base64ToUint8Array, hexToUint8Array, mergeBuffer, createDate } from './utils';
-export { mediaAsset };
 
 interface sealValidation {
   digest_ranges?: any[];
@@ -22,6 +21,7 @@ interface sealValidation {
   signature_bytes: Uint8Array;
   signature_encoding: string;
   verbose: boolean;
+  doh_api: string;
 }
 
 interface sealAttributes {
@@ -158,8 +158,6 @@ interface sealAttributes {
   sl?: string;
 }
 
-const textEncoder = new TextEncoder();
-
 type ErrorName =
   | 'DNS_LOOKUP'
   | 'SEAL_RECORD_MISSING_PARAMETERS'
@@ -281,16 +279,31 @@ export class SEAL {
    * @param {boolean} [verbose=false] - Whether to provide verbose output.
    * @returns {Promise<{ result: boolean, summary: string }>} - A promise that resolves to an object containing the validation result and summary.
    */
-  public static async validateSig(asset: any, verbose: boolean = false): Promise<{ result: boolean; summary: string }> {
+  public static async validateSig(asset: any, verbose: boolean = false): Promise<{ result: any }> {
     return new Promise(async (resolve, reject) => {
-      this.validation = { digest_summary: '', signature_bytes: new Uint8Array(), signature_encoding: '', verbose: verbose };
 
-      let result_string;
+      let result_summary: any = {};
+      asset = MediaAsset.readChunks(asset)
+
+      if (!asset.seal_segments) {
+        result_summary.message = "😢 No SEAL signatures found."
+        return resolve(result_summary)
+      }
+
+      this.validation = {
+        digest_summary: '',
+        signature_bytes: new Uint8Array(),
+        signature_encoding: '',
+        verbose: verbose,
+        doh_api: 'https://mozilla.cloudflare-dns.com/dns-query',
+      };
+
+      SEAL.parse(asset);
 
       // DNS lookup if not in cache
       let domain = this.record.d;
       if (!this.public_keys[domain]) {
-        let TXTRecords = await DoH.getDNSTXTRecords(domain, 'mozilla').catch((error) => {
+        let TXTRecords = await DoH.getDNSTXTRecords(domain, this.validation.doh_api).catch((error) => {
           return reject(
             new ValidationError({
               name: 'DNS_LOOKUP',
@@ -321,11 +334,17 @@ export class SEAL {
             }
           }
         });
-      }
 
-      // Abort if no SEAL public key
-      if (!this.public_keys[domain]) {
-        return;
+        // Abort if no SEAL public key
+        if (!this.public_keys[domain]) {
+          return reject(
+            new ValidationError({
+              name: 'DNS_LOOKUP',
+              message: 'Public key not found or corrupted',
+              cause: JSON.stringify(TXTRecords),
+            }),
+          );
+        }
       }
 
       await SEAL.digest(asset).catch((error) => {
@@ -382,52 +401,63 @@ export class SEAL {
         });
         console.timeEnd('verifySignature');
 
+
+
         if (result === true) {
-          result_string = `${asset.mimeType}:[${asset.filename}]\n✅ SEAL record #1 is valid.`;
+          result_summary.message = `✅ SEAL record #1 is valid.`;
+          result_summary.valid = true;
         } else {
-          result = false;
-          result_string = `${asset.mimeType}:[${asset.filename}]\n⛔ SEAL record #1 is NOT valid.`;
+          result_summary.message = `⛔ SEAL record #1 is NOT valid.`;
+          result_summary.valid = false;
         }
 
-        let summary;
+
+        result_summary.filename = asset.name;
+        result_summary.filemime = asset.mime;
 
         if (this.validation.verbose) {
+          result_summary.filesize = asset.size - 1;
+          result_summary.filedomain = asset.domain;
+          result_summary.doh_api = this.validation.doh_api;
+          result_summary.domain = this.record.d;
+
+          // Signature date
           if (this.validation.signature_date) {
-            result_string = result_string + '\nDate: ' + createDate(this.validation.signature_date);
+            result_summary.signed_on = createDate(this.validation.signature_date).toISOString();
           }
 
+          // Digests
+          result_summary.digest = Array.from(this.validation.digest1 as Uint8Array)
+            .map((bytes) => bytes.toString(16).padStart(2, '0'))
+            .join('');
+
           this.validation.digest2 = new Uint8Array(await crypto.subtle.digest(this.record.da, this.validation.digest2));
+          result_summary.double_digest = Array.from(this.validation.digest2)
+            .map((bytes) => bytes.toString(16).padStart(2, '0'))
+            .join('');
 
-          let key_length = Crypto.getCryptoKeyLength(cryptoKey);
+          // Crypto
+          result_summary.key_algorithm = `${this.record.ka.toUpperCase()}, ${Crypto.getCryptoKeyLength(cryptoKey)} bits`;
+          result_summary.digest_algorithm = this.record.da;
+          result_summary.key_base64 = this.public_keys[this.record.d][this.record.ka];
 
-          // Format ranges for similar output as Sealtool
+          // Ranges, format them for similar output as Sealtool
           let digest_ranges_summary: string[] = [];
           this.validation.digest_ranges?.forEach((digest_range) => {
             digest_ranges_summary.push(digest_range[0] + '-' + (digest_range[1] - 1));
           });
+          result_summary.signed_bytes = digest_ranges_summary;
+          result_summary.spans = this.validation.digest_summary;
 
-          summary = `${result_string}
-  Signature Algorithm: ${this.record.ka.toUpperCase()}, ${key_length} bits
-  Digest Algorithm: ${this.record.da}
-  Digest: ${Array.from(this.validation.digest1 as Uint8Array)
-              .map((bytes) => bytes.toString(16).padStart(2, '0'))
-              .join('')}
-  Double Digest: ${Array.from(this.validation.digest2)
-              .map((bytes) => bytes.toString(16).padStart(2, '0'))
-              .join('')}
-  Signed Bytes: ${digest_ranges_summary}
-  Signature Spans: ${this.validation.digest_summary}
-  Signed By: ${this.record.d} for user ${this.record.id}
-  Copyright: ${this.record.copyright}
-  Comment: ${this.record.info}`;
-        } else {
-          summary = `${result_string}
-  Signature Spans: ${this.validation.digest_summary}
-  Signed By: ${this.record.d} for user ${this.record.id}
-  Copyright: ${this.record.copyright}
-  Comment: ${this.record.info}`;
+          result_summary.user = this.record.id;
+          if (this.record.copyright) {
+            result_summary.copyright = this.record.copyright;
+          }
+          if (this.record.info) {
+            result_summary.comment = this.record.info;
+          }
         }
-        resolve({ result: result, summary: summary });
+        resolve(result_summary);
       } else {
         reject(
           new ValidationError({
@@ -489,7 +519,7 @@ export class SEAL {
               }
               break;
             case 'f':
-              start = asset.getDataLength();
+              start = asset.size;
               if (!show_range_start) {
                 show_range_start = 'End of file';
               }
@@ -540,7 +570,7 @@ export class SEAL {
               show_range_stop = 'Start of file';
               break;
             case 'f':
-              stop = asset.getDataLength();
+              stop = asset.size;
               show_range_stop = 'End of file';
               break;
             case 'S':
@@ -567,7 +597,7 @@ export class SEAL {
         });
 
         crypto.subtle
-          .digest(this.record.da, asset.assembleBuffer(this.validation.digest_ranges))
+          .digest(this.record.da, MediaAsset.assembleBuffer(asset, this.validation.digest_ranges))
           .then((digest) => {
             this.validation.digest1 = new Uint8Array(digest);
             console.timeEnd('digest');
@@ -651,7 +681,7 @@ export class SEAL {
       if (this.record.id) {
         prepend = prepend + this.record.id + ':';
       }
-
+      const textEncoder = new TextEncoder();
       let prepend_buffer: Uint8Array = textEncoder.encode(prepend);
 
       if (this.validation.digest1) {

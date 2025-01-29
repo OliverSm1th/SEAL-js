@@ -12,26 +12,28 @@ export class DoH {
    *
    * @static
    * @param {string} hostname
-   * @param {string} [doh='cloudflare']
+   * @param {string} [doh_api='https://mozilla.cloudflare-dns.com/dns-query']
    * @return {*}  {Promise<string[]>}
    * @memberof SEAL
    */
-  public static async getDNSTXTRecords(hostname: string, doh: string = 'cloudflare'): Promise<string[]> {
-    console.time('getDNS_' + doh);
+  public static async getDNSTXTRecords(
+    hostname: string,
+    doh_api: string = 'https://mozilla.cloudflare-dns.com/dns-query',
+  ): Promise<string[]> {
+    console.time('getDNS_' + doh_api);
 
     return new Promise(async (resolve, reject) => {
       // Initialize the fetch URL and public keys object
       let fetchUrl: string;
 
-      // Define DoH service providers
-      const providers: { [key: string]: string } = {
-        cloudflare: 'https://cloudflare-dns.com/dns-query',
-        mozilla: 'https://mozilla.cloudflare-dns.com/dns-query',
-        google: 'https://dns.google/resolve',
-      };
+      // DoH API providers
+
+      // cloudflare: 'https://cloudflare-dns.com/dns-query',
+      // mozilla: 'https://mozilla.cloudflare-dns.com/dns-query',
+      // google: 'https://dns.google/resolve',
 
       // Construct the fetch URL based on the selected DoH provider
-      fetchUrl = `${providers[doh]}?name=${hostname}&type=TXT`;
+      fetchUrl = `${doh_api}?name=${hostname}&type=TXT`;
 
       // Fetch the DNS record and process the response
       await fetch(fetchUrl, {
@@ -55,7 +57,10 @@ export class DoH {
               let keyObject: any = {};
 
               // Parse the record data field and store key-value pairs
-              const keyElements = record.data.replace(/"/g, '').split(' ');
+              const keyElements = record.data
+                .replace(/".{0,1}"/g, '')
+                .replace(/"/g, '')
+                .split(' ');
               keyElements.forEach((element: string) => {
                 const keyValuePair = element.split('=');
                 keyObject[keyValuePair[0]] = keyValuePair[1];
@@ -75,7 +80,7 @@ export class DoH {
         });
 
       // End timing and resolve the promise with the public keys
-      console.timeEnd('getDNS_' + doh);
+      console.timeEnd('getDNS_' + doh_api);
     });
   }
 }

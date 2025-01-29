@@ -9,8 +9,8 @@ import path from 'path';
 import { promises, readFileSync } from 'node:fs';
 import { assert } from 'chai';
 
-import { SEAL, mediaAsset } from '../dist/seal.js';
-
+import { SEAL } from '../dist/seal.js';
+import { MediaAsset } from '../dist/mediaasset.js'
 //Directory of the test files
 let filesDirectory = './tests/fixtures';
 
@@ -38,10 +38,12 @@ describe('Seal Validation Tests', () => {
   for (let test_file of test_files) {
     it(test_file + ' should return true', async () => {
       const buf = readFileSync(test_file);
-      let asset = new mediaAsset(buf, path.basename(test_file));
-      SEAL.parse(asset);
-      let result = await SEAL.validateSig(asset);
-      assert.equal(result.result, true);
+      let asset = {
+        data: buf,
+        name: path.basename(test_file),
+      }
+      let result = await SEAL.validateSig(asset,false);
+      assert.equal(result.valid, true);
     });
     i++;
     if (i >= max_tests) {

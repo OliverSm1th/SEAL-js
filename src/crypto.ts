@@ -90,7 +90,7 @@ export class Crypto {
       const key = await crypto.subtle
         .importKey('spki', base64ToUint8Array(publicKey), algorithmParameters, true, ['verify'])
         .catch((error) => {
-          reject(error);
+          reject({ message: error });
         });
       resolve(key as CryptoKey);
     });

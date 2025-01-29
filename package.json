@@ -11,7 +11,7 @@
 		"lint": "eslint src",
 		"format": "prettier --write src",
 		"test": "mocha 'tests/**/*test.ts'",
-		"build": "tsup src/seal.ts  src/mimetypes.ts --format cjs,esm --clean"
+		"build": "tsup src/seal.ts src/mediaasset.ts src/mimetypes.ts --format cjs,esm --clean"
 	},
 	"author": "Bertrand Gondouin <gondouin@gmail.com>",
 	"license": "MIT",

@@ -82,7 +82,6 @@ pre {
     overflow-x: hidden;
     line-height: 0;
     color: #fff;
-    background: -webkit-linear-gradient(40deg, transparent 0%, #3E366A 100%);
     background-color: rgba(0, 0, 0, 0);
     background-color: #050f2c;
     border-bottom-left-radius: 5px;
@@ -120,14 +119,18 @@ pre code.hljs {
     line-height: 22px;
 }
 .hljs-punctuation{
-    color:#ff4f81;
+    color:white;
 }
 .hljs-string{
-    color:#ffc168;
+    color:#10bc79;
 }
 
-.hljs-comment {
-    color: #ffc168;
+.hljs-literal {
+    color: #e5e510;
+}
+
+.hljs-number {
+    color: #e5e510;
 }
 .dot {
     margin-right: 5px;

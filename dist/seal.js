@@ -1,80 +1,7 @@
 import {
-  detectMimeType
-} from "./chunk-APGEQWFO.js";
-
-// src/mediaasset.ts
-var textDecoder = new TextDecoder();
-var mediaAsset = class {
-  constructor(data, filename) {
-    this.data = data;
-    this.filename = filename;
-    this.filename = filename;
-    this.readChunks();
-    console.log(`[${filename}](${this.mimeType})`);
-  }
-  mimeType = "image/jpeg";
-  seal_segments = [];
-  getDataLength() {
-    return this.data.byteLength;
-  }
-  /**
-   * Reads chunks of data and processes SEAL segments.
-   */
-  readChunks() {
-    console.time("readChunks");
-    const dataArray = new Uint8Array(this.data);
-    this.data = dataArray;
-    this.mimeType = detectMimeType(dataArray.slice(0, 140));
-    let skip = false;
-    if (this.data.byteLength - 65536 > 65536) {
-      skip = true;
-    }
-    for (let i = 0; i < dataArray.length; i++) {
-      if (i > 65536 && skip === true) {
-        i = this.data.byteLength - 65536;
-        skip = false;
-      }
-      if (dataArray[i] == 60 && dataArray[i + 1] == 115 && dataArray[i + 2] == 101 && dataArray[i + 3] == 97 && dataArray[i + 4] == 108 || // Detect the start of a SEAL segment "<?seal " (hex: 3C 3F 73 65 61 6C 20)
-      dataArray[i] == 60 && dataArray[i + 1] == 63 && dataArray[i + 2] == 115 && dataArray[i + 3] == 101 && dataArray[i + 4] == 97 && dataArray[i + 5] == 108 || // Detect the start of a SEAL segment "&lt;seal " (hex: 26 6C 74 3B 73 65 61 6C 20)
-      dataArray[i] == 38 && dataArray[i + 1] == 108 && dataArray[i + 2] == 116 && dataArray[i + 3] == 59 && dataArray[i + 4] == 115 && dataArray[i + 5] == 101) {
-        const sealStart = i;
-        let continueReading = true;
-        while (continueReading) {
-          if (dataArray[i] == 47 && dataArray[i + 1] == 62 || dataArray[i] == 63 && dataArray[i + 1] == 62 || dataArray[i] == 47 && dataArray[i + 1] == 38 && dataArray[i + 2] == 103 && dataArray[i + 3] == 116) {
-            continueReading = false;
-          }
-          i++;
-        }
-        const sealString = textDecoder.decode(dataArray.slice(sealStart, i + 1)).replace(/\\/gm, "");
-        this.seal_segments.push({
-          string: sealString,
-          signature_end: i - 2
-        });
-      }
-    }
-    console.timeEnd("readChunks");
-  }
-  dumpInfo() {
-    console.log(this);
-  }
-  /**
-   * Assembles a data buffer based on a list of ranges.
-   *
-   * @param ranges - An array of tuples, each representing the start and end positions of a range.
-   * @returns A new Uint8Array that contains the assembled data from the specified ranges.
-   */
-  assembleBuffer(ranges) {
-    const totalLength = ranges.reduce((sum, [start, end]) => sum + (end - start), 0);
-    const assembledBuffer = new Uint8Array(totalLength);
-    let currentPosition = 0;
-    ranges.forEach(([start, end]) => {
-      const dataSlice = this.data.slice(start, end);
-      assembledBuffer.set(new Uint8Array(dataSlice), currentPosition);
-      currentPosition += dataSlice.byteLength;
-    });
-    return assembledBuffer;
-  }
-};
+  MediaAsset
+} from "./chunk-EF6CUMPN.js";
+import "./chunk-APGEQWFO.js";
 
 // src/doh.ts
 var DoH = class {
@@ -84,20 +11,15 @@ var DoH = class {
    *
    * @static
    * @param {string} hostname
-   * @param {string} [doh='cloudflare']
+   * @param {string} [doh_api='https://mozilla.cloudflare-dns.com/dns-query']
    * @return {*}  {Promise<string[]>}
    * @memberof SEAL
    */
-  static async getDNSTXTRecords(hostname, doh = "cloudflare") {
-    console.time("getDNS_" + doh);
+  static async getDNSTXTRecords(hostname, doh_api = "https://mozilla.cloudflare-dns.com/dns-query") {
+    console.time("getDNS_" + doh_api);
     return new Promise(async (resolve, reject) => {
       let fetchUrl;
-      const providers = {
-        cloudflare: "https://cloudflare-dns.com/dns-query",
-        mozilla: "https://mozilla.cloudflare-dns.com/dns-query",
-        google: "https://dns.google/resolve"
-      };
-      fetchUrl = `${providers[doh]}?name=${hostname}&type=TXT`;
+      fetchUrl = `${doh_api}?name=${hostname}&type=TXT`;
       await fetch(fetchUrl, {
         method: "GET",
         headers: {
@@ -113,7 +35,7 @@ var DoH = class {
           let records = [];
           data.Answer.forEach((record) => {
             let keyObject = {};
-            const keyElements = record.data.replace(/"/g, "").split(" ");
+            const keyElements = record.data.replace(/".{0,1}"/g, "").replace(/"/g, "").split(" ");
             keyElements.forEach((element) => {
               const keyValuePair = element.split("=");
               keyObject[keyValuePair[0]] = keyValuePair[1];
@@ -127,7 +49,7 @@ var DoH = class {
       }).catch((error) => {
         reject(error);
       });
-      console.timeEnd("getDNS_" + doh);
+      console.timeEnd("getDNS_" + doh_api);
     });
   }
 };
@@ -236,7 +158,7 @@ var Crypto = class _Crypto {
   static async importCryptoKey(publicKey, algorithmParameters) {
     return new Promise(async (resolve, reject) => {
       const key = await crypto.subtle.importKey("spki", base64ToUint8Array(publicKey), algorithmParameters, true, ["verify"]).catch((error) => {
-        reject(error);
+        reject({ message: error });
       });
       resolve(key);
     });
@@ -309,7 +231,6 @@ var Crypto = class _Crypto {
 };
 
 // src/seal.ts
-var textEncoder = new TextEncoder();
 var ValidationError = class extends Error {
   name;
   // Specific type for error name
@@ -391,11 +312,23 @@ var SEAL = class _SEAL {
    */
   static async validateSig(asset, verbose = false) {
     return new Promise(async (resolve, reject) => {
-      this.validation = { digest_summary: "", signature_bytes: new Uint8Array(), signature_encoding: "", verbose };
-      let result_string;
+      let result_summary = {};
+      asset = MediaAsset.readChunks(asset);
+      if (!asset.seal_segments) {
+        result_summary.message = "\u{1F622} No SEAL signatures found.";
+        return resolve(result_summary);
+      }
+      this.validation = {
+        digest_summary: "",
+        signature_bytes: new Uint8Array(),
+        signature_encoding: "",
+        verbose,
+        doh_api: "https://mozilla.cloudflare-dns.com/dns-query"
+      };
+      _SEAL.parse(asset);
       let domain = this.record.d;
       if (!this.public_keys[domain]) {
-        let TXTRecords = await DoH.getDNSTXTRecords(domain, "mozilla").catch((error) => {
+        let TXTRecords = await DoH.getDNSTXTRecords(domain, this.validation.doh_api).catch((error) => {
           return reject(
             new ValidationError({
               name: "DNS_LOOKUP",
@@ -420,9 +353,15 @@ var SEAL = class _SEAL {
             }
           }
         });
-      }
-      if (!this.public_keys[domain]) {
-        return;
+        if (!this.public_keys[domain]) {
+          return reject(
+            new ValidationError({
+              name: "DNS_LOOKUP",
+              message: "Public key not found or corrupted",
+              cause: JSON.stringify(TXTRecords)
+            })
+          );
+        }
       }
       await _SEAL.digest(asset).catch((error) => {
         reject(
@@ -474,42 +413,43 @@ var SEAL = class _SEAL {
         });
         console.timeEnd("verifySignature");
         if (result === true) {
-          result_string = `${asset.mimeType}:[${asset.filename}]
-\u2705 SEAL record #1 is valid.`;
+          result_summary.message = `\u2705 SEAL record #1 is valid.`;
+          result_summary.valid = true;
         } else {
-          result = false;
-          result_string = `${asset.mimeType}:[${asset.filename}]
-\u26D4 SEAL record #1 is NOT valid.`;
+          result_summary.message = `\u26D4 SEAL record #1 is NOT valid.`;
+          result_summary.valid = false;
         }
-        let summary;
+        result_summary.filename = asset.name;
+        result_summary.filemime = asset.mime;
         if (this.validation.verbose) {
+          result_summary.filesize = asset.size - 1;
+          result_summary.filedomain = asset.domain;
+          result_summary.doh_api = this.validation.doh_api;
+          result_summary.domain = this.record.d;
           if (this.validation.signature_date) {
-            result_string = result_string + "\nDate: " + createDate(this.validation.signature_date);
+            result_summary.signed_on = createDate(this.validation.signature_date).toISOString();
           }
+          result_summary.digest = Array.from(this.validation.digest1).map((bytes) => bytes.toString(16).padStart(2, "0")).join("");
           this.validation.digest2 = new Uint8Array(await crypto.subtle.digest(this.record.da, this.validation.digest2));
-          let key_length = Crypto.getCryptoKeyLength(cryptoKey);
+          result_summary.double_digest = Array.from(this.validation.digest2).map((bytes) => bytes.toString(16).padStart(2, "0")).join("");
+          result_summary.key_algorithm = `${this.record.ka.toUpperCase()}, ${Crypto.getCryptoKeyLength(cryptoKey)} bits`;
+          result_summary.digest_algorithm = this.record.da;
+          result_summary.key_base64 = this.public_keys[this.record.d][this.record.ka];
           let digest_ranges_summary = [];
           this.validation.digest_ranges?.forEach((digest_range) => {
             digest_ranges_summary.push(digest_range[0] + "-" + (digest_range[1] - 1));
           });
-          summary = `${result_string}
-  Signature Algorithm: ${this.record.ka.toUpperCase()}, ${key_length} bits
-  Digest Algorithm: ${this.record.da}
-  Digest: ${Array.from(this.validation.digest1).map((bytes) => bytes.toString(16).padStart(2, "0")).join("")}
-  Double Digest: ${Array.from(this.validation.digest2).map((bytes) => bytes.toString(16).padStart(2, "0")).join("")}
-  Signed Bytes: ${digest_ranges_summary}
-  Signature Spans: ${this.validation.digest_summary}
-  Signed By: ${this.record.d} for user ${this.record.id}
-  Copyright: ${this.record.copyright}
-  Comment: ${this.record.info}`;
-        } else {
-          summary = `${result_string}
-  Signature Spans: ${this.validation.digest_summary}
-  Signed By: ${this.record.d} for user ${this.record.id}
-  Copyright: ${this.record.copyright}
-  Comment: ${this.record.info}`;
+          result_summary.signed_bytes = digest_ranges_summary;
+          result_summary.spans = this.validation.digest_summary;
+          result_summary.user = this.record.id;
+          if (this.record.copyright) {
+            result_summary.copyright = this.record.copyright;
+          }
+          if (this.record.info) {
+            result_summary.comment = this.record.info;
+          }
         }
-        resolve({ result, summary });
+        resolve(result_summary);
       } else {
         reject(
           new ValidationError({
@@ -563,7 +503,7 @@ var SEAL = class _SEAL {
               }
               break;
             case "f":
-              start = asset.getDataLength();
+              start = asset.size;
               if (!show_range_start) {
                 show_range_start = "End of file";
               }
@@ -610,7 +550,7 @@ var SEAL = class _SEAL {
               show_range_stop = "Start of file";
               break;
             case "f":
-              stop = asset.getDataLength();
+              stop = asset.size;
               show_range_stop = "End of file";
               break;
             case "S":
@@ -634,7 +574,7 @@ var SEAL = class _SEAL {
           this.validation.digest_ranges?.push([start, stop]);
           this.validation.digest_summary = `${show_range_start} to ${show_range_stop}`;
         });
-        crypto.subtle.digest(this.record.da, asset.assembleBuffer(this.validation.digest_ranges)).then((digest) => {
+        crypto.subtle.digest(this.record.da, MediaAsset.assembleBuffer(asset, this.validation.digest_ranges)).then((digest) => {
           this.validation.digest1 = new Uint8Array(digest);
           console.timeEnd("digest");
           resolve();
@@ -707,6 +647,7 @@ var SEAL = class _SEAL {
       if (this.record.id) {
         prepend = prepend + this.record.id + ":";
       }
+      const textEncoder = new TextEncoder();
       let prepend_buffer = textEncoder.encode(prepend);
       if (this.validation.digest1) {
         this.validation.digest2 = mergeBuffer(prepend_buffer, this.validation.digest1);
@@ -725,6 +666,5 @@ var SEAL = class _SEAL {
 };
 export {
   SEAL,
-  ValidationError,
-  mediaAsset
+  ValidationError
 };
