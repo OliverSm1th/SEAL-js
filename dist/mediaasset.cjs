@@ -132,32 +132,32 @@ var MediaAsset = class {
   static readChunks(asset) {
     console.time("readChunks");
     asset.size = asset.data.byteLength;
-    asset.data = new Uint8Array(asset.data);
+    const data = new Uint8Array(asset.data);
     if (!asset.mime) {
-      asset.mime = detectMimeType(asset.data);
+      asset.mime = detectMimeType(data);
     }
     let skip = false;
-    if (asset.data.byteLength - 65536 > 65536) {
+    if (data.byteLength - 65536 > 65536) {
       skip = true;
     }
-    for (let i = 0; i < asset.data.length; i++) {
+    for (let i = 0; i < data.length; i++) {
       if (i > 65536 && skip === true) {
         i = asset.data.byteLength - 65536;
         skip = false;
       }
-      if (asset.data[i] == 60 && asset.data[i + 1] == 115 && asset.data[i + 2] == 101 && asset.data[i + 3] == 97 && asset.data[i + 4] == 108 || // Detect the start of a SEAL segment "<?seal " (hex: 3C 3F 73 65 61 6C 20)
-      asset.data[i] == 60 && asset.data[i + 1] == 63 && asset.data[i + 2] == 115 && asset.data[i + 3] == 101 && asset.data[i + 4] == 97 && asset.data[i + 5] == 108 || // Detect the start of a SEAL segment "&lt;seal " (hex: 26 6C 74 3B 73 65 61 6C 20)
-      asset.data[i] == 38 && asset.data[i + 1] == 108 && asset.data[i + 2] == 116 && asset.data[i + 3] == 59 && asset.data[i + 4] == 115 && asset.data[i + 5] == 101) {
+      if (data[i] == 60 && data[i + 1] == 115 && data[i + 2] == 101 && data[i + 3] == 97 && data[i + 4] == 108 || // Detect the start of a SEAL segment "<?seal " (hex: 3C 3F 73 65 61 6C 20)
+      data[i] == 60 && data[i + 1] == 63 && data[i + 2] == 115 && data[i + 3] == 101 && data[i + 4] == 97 && data[i + 5] == 108 || // Detect the start of a SEAL segment "&lt;seal " (hex: 26 6C 74 3B 73 65 61 6C 20)
+      data[i] == 38 && data[i + 1] == 108 && data[i + 2] == 116 && data[i + 3] == 59 && data[i + 4] == 115 && data[i + 5] == 101) {
         const sealStart = i;
         let continueReading = true;
         while (continueReading) {
-          if (asset.data[i] == 47 && asset.data[i + 1] == 62 || asset.data[i] == 63 && asset.data[i + 1] == 62 || asset.data[i] == 47 && asset.data[i + 1] == 38 && asset.data[i + 2] == 103 && asset.data[i + 3] == 116) {
+          if (data[i] == 47 && data[i + 1] == 62 || data[i] == 63 && data[i + 1] == 62 || data[i] == 47 && data[i + 1] == 38 && data[i + 2] == 103 && data[i + 3] == 116) {
             continueReading = false;
           }
           i++;
         }
         const textDecoder2 = new TextDecoder();
-        const sealString = textDecoder2.decode(asset.data.slice(sealStart, i + 1)).replace(/\\/gm, "");
+        const sealString = textDecoder2.decode(data.slice(sealStart, i + 1)).replace(/\\/gm, "");
         if (!asset.seal_segments) {
           asset.seal_segments = [];
         }
@@ -167,6 +167,7 @@ var MediaAsset = class {
         });
       }
     }
+    asset.data = data;
     console.timeEnd("readChunks");
     return asset;
   }

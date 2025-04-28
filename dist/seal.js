@@ -1,6 +1,6 @@
 import {
   MediaAsset
-} from "./chunk-EF6CUMPN.js";
+} from "./chunk-CNHCTU2O.js";
 import "./chunk-APGEQWFO.js";
 
 // src/doh.ts
@@ -140,10 +140,12 @@ var Crypto = class _Crypto {
   static getCryptoKeyLength(key) {
     let keyLength;
     if (key.algorithm.name === "ECDSA") {
-      keyLength = parseInt(key.algorithm.namedCurve.replace("P-", ""));
+      const alg = key.algorithm;
+      keyLength = parseInt(alg.namedCurve.replace("P-", ""));
     }
     if (key.algorithm.name === "RSASSA-PKCS1-v1_5") {
-      keyLength = key.algorithm.modulusLength;
+      const alg = key.algorithm;
+      keyLength = alg.modulusLength;
     }
     return keyLength;
   }
@@ -574,7 +576,8 @@ var SEAL = class _SEAL {
           this.validation.digest_ranges?.push([start, stop]);
           this.validation.digest_summary = `${show_range_start} to ${show_range_stop}`;
         });
-        crypto.subtle.digest(this.record.da, MediaAsset.assembleBuffer(asset, this.validation.digest_ranges)).then((digest) => {
+        this.validation.digest1_ = MediaAsset.assembleBuffer(asset, this.validation.digest_ranges);
+        crypto.subtle.digest(this.record.da, this.validation.digest1_).then((digest) => {
           this.validation.digest1 = new Uint8Array(digest);
           console.timeEnd("digest");
           resolve();
@@ -647,6 +650,13 @@ var SEAL = class _SEAL {
       if (this.record.id) {
         prepend = prepend + this.record.id + ":";
       }
+      if (prepend.length == 0) {
+        this.validation.digest2 = this.validation.digest1_;
+        console.timeEnd("doubleDigest");
+        resolve();
+        return;
+      }
+      console.log("Prepend: " + prepend);
       const textEncoder = new TextEncoder();
       let prepend_buffer = textEncoder.encode(prepend);
       if (this.validation.digest1) {

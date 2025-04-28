@@ -69,10 +69,12 @@ export class Crypto {
   public static getCryptoKeyLength(key: CryptoKey) {
     let keyLength;
     if (key.algorithm.name === 'ECDSA') {
-      keyLength = parseInt(key.algorithm.namedCurve.replace('P-', ''));
+      const alg = key.algorithm as EcKeyGenParams
+      keyLength = parseInt(alg.namedCurve.replace('P-', ''));
     }
     if (key.algorithm.name === 'RSASSA-PKCS1-v1_5') {
-      keyLength = key.algorithm.modulusLength;
+      const alg = key.algorithm as RsaHashedKeyGenParams
+      keyLength = alg.modulusLength;
     }
     return keyLength;
   }

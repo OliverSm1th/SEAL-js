@@ -133,32 +133,32 @@ var MediaAsset = class {
   static readChunks(asset) {
     console.time("readChunks");
     asset.size = asset.data.byteLength;
-    asset.data = new Uint8Array(asset.data);
+    const data = new Uint8Array(asset.data);
     if (!asset.mime) {
-      asset.mime = detectMimeType(asset.data);
+      asset.mime = detectMimeType(data);
     }
     let skip = false;
-    if (asset.data.byteLength - 65536 > 65536) {
+    if (data.byteLength - 65536 > 65536) {
       skip = true;
     }
-    for (let i = 0; i < asset.data.length; i++) {
+    for (let i = 0; i < data.length; i++) {
       if (i > 65536 && skip === true) {
         i = asset.data.byteLength - 65536;
         skip = false;
       }
-      if (asset.data[i] == 60 && asset.data[i + 1] == 115 && asset.data[i + 2] == 101 && asset.data[i + 3] == 97 && asset.data[i + 4] == 108 || // Detect the start of a SEAL segment "<?seal " (hex: 3C 3F 73 65 61 6C 20)
-      asset.data[i] == 60 && asset.data[i + 1] == 63 && asset.data[i + 2] == 115 && asset.data[i + 3] == 101 && asset.data[i + 4] == 97 && asset.data[i + 5] == 108 || // Detect the start of a SEAL segment "&lt;seal " (hex: 26 6C 74 3B 73 65 61 6C 20)
-      asset.data[i] == 38 && asset.data[i + 1] == 108 && asset.data[i + 2] == 116 && asset.data[i + 3] == 59 && asset.data[i + 4] == 115 && asset.data[i + 5] == 101) {
+      if (data[i] == 60 && data[i + 1] == 115 && data[i + 2] == 101 && data[i + 3] == 97 && data[i + 4] == 108 || // Detect the start of a SEAL segment "<?seal " (hex: 3C 3F 73 65 61 6C 20)
+      data[i] == 60 && data[i + 1] == 63 && data[i + 2] == 115 && data[i + 3] == 101 && data[i + 4] == 97 && data[i + 5] == 108 || // Detect the start of a SEAL segment "&lt;seal " (hex: 26 6C 74 3B 73 65 61 6C 20)
+      data[i] == 38 && data[i + 1] == 108 && data[i + 2] == 116 && data[i + 3] == 59 && data[i + 4] == 115 && data[i + 5] == 101) {
         const sealStart = i;
         let continueReading = true;
         while (continueReading) {
-          if (asset.data[i] == 47 && asset.data[i + 1] == 62 || asset.data[i] == 63 && asset.data[i + 1] == 62 || asset.data[i] == 47 && asset.data[i + 1] == 38 && asset.data[i + 2] == 103 && asset.data[i + 3] == 116) {
+          if (data[i] == 47 && data[i + 1] == 62 || data[i] == 63 && data[i + 1] == 62 || data[i] == 47 && data[i + 1] == 38 && data[i + 2] == 103 && data[i + 3] == 116) {
             continueReading = false;
           }
           i++;
         }
         const textDecoder2 = new TextDecoder();
-        const sealString = textDecoder2.decode(asset.data.slice(sealStart, i + 1)).replace(/\\/gm, "");
+        const sealString = textDecoder2.decode(data.slice(sealStart, i + 1)).replace(/\\/gm, "");
         if (!asset.seal_segments) {
           asset.seal_segments = [];
         }
@@ -168,6 +168,7 @@ var MediaAsset = class {
         });
       }
     }
+    asset.data = data;
     console.timeEnd("readChunks");
     return asset;
   }
@@ -387,10 +388,12 @@ var Crypto = class _Crypto {
   static getCryptoKeyLength(key) {
     let keyLength;
     if (key.algorithm.name === "ECDSA") {
-      keyLength = parseInt(key.algorithm.namedCurve.replace("P-", ""));
+      const alg = key.algorithm;
+      keyLength = parseInt(alg.namedCurve.replace("P-", ""));
     }
     if (key.algorithm.name === "RSASSA-PKCS1-v1_5") {
-      keyLength = key.algorithm.modulusLength;
+      const alg = key.algorithm;
+      keyLength = alg.modulusLength;
     }
     return keyLength;
   }
@@ -821,7 +824,8 @@ var SEAL = class _SEAL {
           this.validation.digest_ranges?.push([start, stop]);
           this.validation.digest_summary = `${show_range_start} to ${show_range_stop}`;
         });
-        crypto.subtle.digest(this.record.da, MediaAsset.assembleBuffer(asset, this.validation.digest_ranges)).then((digest) => {
+        this.validation.digest1_ = MediaAsset.assembleBuffer(asset, this.validation.digest_ranges);
+        crypto.subtle.digest(this.record.da, this.validation.digest1_).then((digest) => {
           this.validation.digest1 = new Uint8Array(digest);
           console.timeEnd("digest");
           resolve();
@@ -894,6 +898,13 @@ var SEAL = class _SEAL {
       if (this.record.id) {
         prepend = prepend + this.record.id + ":";
       }
+      if (prepend.length == 0) {
+        this.validation.digest2 = this.validation.digest1_;
+        console.timeEnd("doubleDigest");
+        resolve();
+        return;
+      }
+      console.log("Prepend: " + prepend);
       const textEncoder = new TextEncoder();
       let prepend_buffer = textEncoder.encode(prepend);
       if (this.validation.digest1) {

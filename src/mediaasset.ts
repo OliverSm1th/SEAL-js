@@ -29,23 +29,23 @@ export class MediaAsset {
 
     asset.size = asset.data.byteLength
     // Convert the data to a Uint8Array
-    asset.data = new Uint8Array(asset.data);
+    const data = new Uint8Array(asset.data)
 
 
     // Detect the MIME type if it's not available
     if (!asset.mime) {
-      asset.mime = detectMimeType(asset.data);
+      asset.mime = detectMimeType(data);
     }
 
     // scan only the first and last 64kB if file > 64kB
     // probably not working for some formats...
     let skip = false;
-    if (asset.data.byteLength - 65536 > 65536) {
+    if (data.byteLength - 65536 > 65536) {
       skip = true;
     }
 
     // Iterate through the data array to find and process SEAL segments
-    for (let i = 0; i < asset.data.length; i++) {
+    for (let i = 0; i < data.length; i++) {
       if (i > 65536 && skip === true) {
         //Moving pointer to the last 64kB
         i = asset.data.byteLength - 65536;
@@ -54,25 +54,25 @@ export class MediaAsset {
 
       // Detect the start of a SEAL segment "<seal " (hex: 3C 73 65 61 6C 20)
       if (
-        (asset.data[i] == 0x3c &&
-          asset.data[i + 1] == 0x73 &&
-          asset.data[i + 2] == 0x65 &&
-          asset.data[i + 3] == 0x61 &&
-          asset.data[i + 4] == 0x6c) ||
+        (data[i] == 0x3c &&
+          data[i + 1] == 0x73 &&
+          data[i + 2] == 0x65 &&
+          data[i + 3] == 0x61 &&
+          data[i + 4] == 0x6c) ||
         // Detect the start of a SEAL segment "<?seal " (hex: 3C 3F 73 65 61 6C 20)
-        (asset.data[i] == 0x3c &&
-          asset.data[i + 1] == 0x3f &&
-          asset.data[i + 2] == 0x73 &&
-          asset.data[i + 3] == 0x65 &&
-          asset.data[i + 4] == 0x61 &&
-          asset.data[i + 5] == 0x6c) ||
+        (data[i] == 0x3c &&
+          data[i + 1] == 0x3f &&
+          data[i + 2] == 0x73 &&
+          data[i + 3] == 0x65 &&
+          data[i + 4] == 0x61 &&
+          data[i + 5] == 0x6c) ||
         // Detect the start of a SEAL segment "&lt;seal " (hex: 26 6C 74 3B 73 65 61 6C 20)
-        (asset.data[i] == 0x26 &&
-          asset.data[i + 1] == 0x6c &&
-          asset.data[i + 2] == 0x74 &&
-          asset.data[i + 3] == 0x3b &&
-          asset.data[i + 4] == 0x73 &&
-          asset.data[i + 5] == 0x65)
+        (data[i] == 0x26 &&
+          data[i + 1] == 0x6c &&
+          data[i + 2] == 0x74 &&
+          data[i + 3] == 0x3b &&
+          data[i + 4] == 0x73 &&
+          data[i + 5] == 0x65)
       ) {
         const sealStart = i;
         let continueReading = true;
@@ -80,9 +80,9 @@ export class MediaAsset {
         // Continue until the end of the SEAL segment "/>" (hex: 2F 3E) or "?>" (hex: 3F 3E) or "/&gt" (hex: 2F 26 67 74)
         while (continueReading) {
           if (
-            (asset.data[i] == 0x2f && asset.data[i + 1] == 0x3e) ||
-            (asset.data[i] == 0x3f && asset.data[i + 1] == 0x3e) ||
-            (asset.data[i] == 0x2f && asset.data[i + 1] == 0x26 && asset.data[i + 2] == 0x67 && asset.data[i + 3] == 0x74)
+            (data[i] == 0x2f && data[i + 1] == 0x3e) ||
+            (data[i] == 0x3f && data[i + 1] == 0x3e) ||
+            (data[i] == 0x2f && data[i + 1] == 0x26 && data[i + 2] == 0x67 && data[i + 3] == 0x74)
           ) {
             continueReading = false;
           }
@@ -91,7 +91,7 @@ export class MediaAsset {
 
         // Decode the SEAL segment and add it to seal_segments
         const textDecoder = new TextDecoder();
-        const sealString = textDecoder.decode(asset.data.slice(sealStart, i + 1)).replace(/\\/gm, '');
+        const sealString = textDecoder.decode(data.slice(sealStart, i + 1)).replace(/\\/gm, '');
 
         if (!asset.seal_segments) {
           asset.seal_segments = [];
@@ -103,6 +103,7 @@ export class MediaAsset {
         });
       }
     }
+    asset.data = data
 
     // End timing the readChunks operation
     console.timeEnd('readChunks');

@@ -15,6 +15,7 @@ interface sealValidation {
   digest_summary: string;
   error?: any[];
   digest1?: Uint8Array;
+  digest1_?: Uint8Array;
   digest2?: Uint8Array;
   signature_date?: string;
   signature?: string;
@@ -382,7 +383,7 @@ export class SEAL {
         );
       });
 
-      if (this.validation.digest2 && this.validation.signature && cryptoKey) {
+      if ((this.validation.digest2) && this.validation.signature && cryptoKey) {
         console.time('verifySignature');
 
         let result = await Crypto.verifySignature(
@@ -595,9 +596,10 @@ export class SEAL {
           this.validation.digest_ranges?.push([start, stop]);
           this.validation.digest_summary = `${show_range_start} to ${show_range_stop}`;
         });
+        this.validation.digest1_ = MediaAsset.assembleBuffer(asset, this.validation.digest_ranges)
 
         crypto.subtle
-          .digest(this.record.da, MediaAsset.assembleBuffer(asset, this.validation.digest_ranges))
+          .digest(this.record.da, this.validation.digest1_)
           .then((digest) => {
             this.validation.digest1 = new Uint8Array(digest);
             console.timeEnd('digest');
@@ -681,6 +683,14 @@ export class SEAL {
       if (this.record.id) {
         prepend = prepend + this.record.id + ':';
       }
+
+      if(prepend.length == 0) {
+        this.validation.digest2 = this.validation.digest1_;
+        console.timeEnd('doubleDigest');
+        resolve();
+        return
+      }
+      console.log("Prepend: "+prepend)
       const textEncoder = new TextEncoder();
       let prepend_buffer: Uint8Array = textEncoder.encode(prepend);
 
